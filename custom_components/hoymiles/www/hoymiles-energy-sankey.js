@@ -493,7 +493,7 @@ function _hmSankeyRegister() {
         snks: snkNodes,
         srcRibbons,
         snkRibbons,
-        hub: { ...HUB, y: PAD_TOP, h: usable, label: this._label(HUB) },
+        hub: { ...HUB, y: PAD_TOP, h: usable, label: this._label(HUB), value: total },
         hasBalancer: !!balancer,
       };
     }
@@ -560,12 +560,18 @@ function _hmSankeyRegister() {
     }
 
     _toolbar() {
-      if (this._config.show_toolbar === false) return "";
-      const pills = RANGES.map((r) => `
-        <button class="pill ${r.id === this._range ? "on" : ""}"
-          data-range="${r.id}">${esc(this._t(r.en, r.zh))}</button>`).join("");
-      const refresh = `<button class="pill" data-range="__refresh">${esc(this._t("Refresh", "刷新"))}</button>`;
-      return `<div class="toolbar">${pills}${refresh}</div>`;
+      if (this._config.show_toolbar === false) return null;
+      const pills = RANGES.map(
+        (r) =>
+          `<button class="pill ${r.id === this._range ? "on" : ""}"` +
+          ` data-range="${esc(r.id)}">${esc(this._t(r.en, r.zh))}</button>`
+      ).join("");
+      const refresh =
+        `<button class="pill" data-range="__refresh">` +
+        `${esc(this._t("Refresh", "刷新"))}</button>`;
+      // Must go through _untrusted(): a plain string would be escaped by Lit
+      // and end up rendered as literal text instead of buttons.
+      return this._untrusted(`<div class="toolbar">${pills}${refresh}</div>`);
     }
 
     _handleClick = (event) => {
@@ -621,7 +627,7 @@ function _hmSankeyRegister() {
       }
 
       return html`
-        <ha-card>
+        <ha-card @click=${this._handleClick}>
           <div class="head">
             <span class="title">${title}</span>
             ${this._graph && !this._graph.empty
