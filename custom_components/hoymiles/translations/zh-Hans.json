@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "禾迈微储",
-        "description": "发现 {count} 台设备。可从列表选择，或手动填写设备标识 `<client_prefix>-<SN>`。",
+        "description": "发现 {count} 台设备。可从列表选择，或手动填写设备标识（格式 client_prefix-SN）。",
         "data": {
           "dev_id": "设备标识"
         }

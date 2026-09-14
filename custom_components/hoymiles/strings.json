@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Hoymiles Micro Storage",
-        "description": "Discovered {count} device(s). Pick one from the list or type the device id manually. The device id is `<client_prefix>-<SN>`.",
+        "description": "Discovered {count} device(s). Pick one from the list or type the device id manually. The device id has the form client_prefix-SN.",
         "data": {
           "dev_id": "Device ID"
         }

@@ -1,13 +1,17 @@
 set_tou_day_plan:
   name: Set TOU day plan
   description: Publish one TOU day plan (day1..day8) to a Hoymiles micro storage device.
-  target:
-    device:
-      integration: hoymiles
   fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles
     dev_id:
       name: Device ID
-      description: Device identifier (<client_prefix>-<SN>). Optional when a device target is selected.
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
       required: false
       example: "MSA-280520260806"
       selector:
@@ -34,13 +38,17 @@ set_tou_day_plan:
 set_tou_week_plan:
   name: Set TOU week plan
   description: Publish the weekday to day-plan mapping.
-  target:
-    device:
-      integration: hoymiles
   fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles
     dev_id:
       name: Device ID
-      description: Device identifier (<client_prefix>-<SN>). Optional when a device target is selected.
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
       required: false
       example: "MSA-280520260806"
       selector:
@@ -56,13 +64,17 @@ set_tou_week_plan:
 get_tou_plan:
   name: Get TOU plan
   description: Query the plan configured for one weekday.
-  target:
-    device:
-      integration: hoymiles
   fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles
     dev_id:
       name: Device ID
-      description: Device identifier (<client_prefix>-<SN>). Optional when a device target is selected.
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
       required: false
       example: "MSA-280520260806"
       selector:
@@ -79,13 +91,17 @@ get_tou_plan:
 set_ems_mode:
   name: Set EMS mode
   description: Switch the EMS mode of the device.
-  target:
-    device:
-      integration: hoymiles
   fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles
     dev_id:
       name: Device ID
-      description: Device identifier (<client_prefix>-<SN>). Optional when a device target is selected.
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
       required: false
       example: "MSA-280520260806"
       selector:
@@ -102,13 +118,17 @@ set_ems_mode:
 reboot:
   name: Reboot device
   description: Send the RESTART command to the device.
-  target:
-    device:
-      integration: hoymiles
   fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles
     dev_id:
       name: Device ID
-      description: Device identifier (<client_prefix>-<SN>). Optional when a device target is selected.
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
       required: false
       example: "MSA-280520260806"
       selector:
