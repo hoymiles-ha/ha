@@ -28,12 +28,14 @@
 ├── DEPLOY.md                         # 本文件
 ├── hacs.json                         # HACS 必需：清单
 ├── scripts/
-│   ├── make_brand_icon.ps1           # 生成品牌图标（可复现）
+│   ├── make_brand_icon.ps1           # 生成合成品牌图标（无素材时的兜底）
+│   ├── make_brand_from_image.ps1     # 从 logo 图片抠底生成 icon.png + logo.png
 │   └── release.ps1                   # 一键发版
 └── custom_components/                # HACS 必需：集成目录
     └── hoymiles/
         ├── brand/
-        │   └── icon.png              # HACS 品牌校验：本地图标即可免去上游 PR
+        │   ├── icon.png              # HACS 品牌校验必需；本地图标可免去上游 PR
+        │   └── logo.png              # 完整 wordmark（宽版）
         ├── manifest.json             # 必需，含 version（HACS 硬性要求）
         ├── www/
         │   ├── hoymiles-tou-editor.js
