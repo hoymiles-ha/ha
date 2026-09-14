@@ -1,0 +1,133 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Hoymiles Micro Storage",
+        "description": "Discovered {count} device(s). Pick one from the list or type the device id manually. The device id is `<client_prefix>-<SN>`.",
+        "data": {
+          "dev_id": "Device ID"
+        }
+      }
+    },
+    "error": {
+      "dev_id_required": "A device id is required"
+    },
+    "abort": {
+      "already_configured": "This device is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "TOU plan",
+        "menu_options": {
+          "day_plan": "Edit day plan",
+          "week_plan": "Edit week plan",
+          "get_plan": "Get current plan",
+          "set_mode": "Set EMS mode",
+          "reboot": "Reboot device"
+        }
+      },
+      "day_plan": {
+        "title": "Day plan",
+        "description": "Choose which day plan (day1..day8) to edit and how many time segments it has (max 12).",
+        "data": {
+          "day_idx": "Day plan index",
+          "segments": "Number of segments"
+        }
+      },
+      "day_segment": {
+        "title": "Segment {index} of {total} ({day})",
+        "description": "mode 1=force charge, 2=PV charge, 4=discharge. ts/te are 15-minute slots (0-96), sh/sl are SOC in %, pc/pd are power limits in W.",
+        "data": {
+          "mode": "Mode",
+          "ts": "Start slot",
+          "te": "End slot",
+          "sh": "Charge SOC limit",
+          "sl": "Discharge SOC limit",
+          "pc": "Charge power limit",
+          "pd": "Discharge power limit"
+        }
+      },
+      "week_plan": {
+        "title": "Week plan",
+        "description": "Map each weekday to one of the day plans. Choose 'none' to run self-consumption for that day.",
+        "data": {
+          "mon": "Monday",
+          "tue": "Tuesday",
+          "wed": "Wednesday",
+          "thu": "Thursday",
+          "fri": "Friday",
+          "sat": "Saturday",
+          "sun": "Sunday"
+        }
+      },
+      "get_plan": {
+        "title": "Get current plan",
+        "description": "Query the plan currently configured for one weekday. The result is shown in the status sensor and a notification.",
+        "data": {
+          "week": "Weekday"
+        }
+      },
+      "set_mode": {
+        "title": "Set EMS mode",
+        "description": "general = device self-consumption, mqtt_ctrl = MQTT power control, tou_plan = time-of-use plan.",
+        "data": {
+          "mode": "EMS mode"
+        }
+      },
+      "reboot": {
+        "title": "Reboot device",
+        "data": {
+          "confirm": "Confirm reboot"
+        }
+      }
+    },
+    "abort": {
+      "empty_week_plan": "No weekday was mapped to a day plan, nothing was sent",
+      "get_plan_failed": "The device did not answer the plan query"
+    }
+  },
+  "services": {
+    "set_tou_day_plan": {
+      "name": "Set TOU day plan",
+      "description": "Publish one TOU day plan (day1..day8) to the device.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." },
+        "day_idx": { "name": "Day plan index", "description": "1..8" },
+        "day_plan": { "name": "Day plan", "description": "List of segments (max 12)." }
+      }
+    },
+    "set_tou_week_plan": {
+      "name": "Set TOU week plan",
+      "description": "Publish the weekday to day-plan mapping.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." },
+        "week_plan": { "name": "Week plan", "description": "List of {week:[...], day_idx:N}." }
+      }
+    },
+    "get_tou_plan": {
+      "name": "Get TOU plan",
+      "description": "Query the plan configured for one weekday.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." },
+        "week": { "name": "Weekday", "description": "Mon..Sun" }
+      }
+    },
+    "set_ems_mode": {
+      "name": "Set EMS mode",
+      "description": "Switch the EMS mode (general / mqtt_ctrl / tou_plan).",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." },
+        "mode": { "name": "Mode", "description": "general, mqtt_ctrl or tou_plan" }
+      }
+    },
+    "reboot": {
+      "name": "Reboot device",
+      "description": "Send the RESTART command to the device.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." }
+      }
+    }
+  }
+}

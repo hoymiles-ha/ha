@@ -1,0 +1,133 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "禾迈微储",
+        "description": "发现 {count} 台设备。可从列表选择，或手动填写设备标识 `<client_prefix>-<SN>`。",
+        "data": {
+          "dev_id": "设备标识"
+        }
+      }
+    },
+    "error": {
+      "dev_id_required": "设备标识不能为空"
+    },
+    "abort": {
+      "already_configured": "该设备已配置"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "分时(TOU)计划",
+        "menu_options": {
+          "day_plan": "编辑日计划",
+          "week_plan": "编辑周计划",
+          "get_plan": "获取当前计划",
+          "set_mode": "设置 EMS 模式",
+          "reboot": "重启设备"
+        }
+      },
+      "day_plan": {
+        "title": "日计划",
+        "description": "选择要编辑的日计划 (day1..day8) 以及时间段数量（最多 12 段）。",
+        "data": {
+          "day_idx": "日计划索引",
+          "segments": "时间段数量"
+        }
+      },
+      "day_segment": {
+        "title": "第 {index}/{total} 段 ({day})",
+        "description": "mode：1=强制充电，2=光伏充电，4=放电。ts/te 为 15 分钟槽位 (0-96)，sh/sl 为 SOC 百分比，pc/pd 为功率限值 (W)。",
+        "data": {
+          "mode": "模式",
+          "ts": "开始槽位",
+          "te": "结束槽位",
+          "sh": "充电截止 SOC",
+          "sl": "放电截止 SOC",
+          "pc": "充电功率限值",
+          "pd": "放电功率限值"
+        }
+      },
+      "week_plan": {
+        "title": "周计划",
+        "description": "为每个星期指定一个日计划；选择 none 表示该日按自发自用运行。",
+        "data": {
+          "mon": "周一",
+          "tue": "周二",
+          "wed": "周三",
+          "thu": "周四",
+          "fri": "周五",
+          "sat": "周六",
+          "sun": "周日"
+        }
+      },
+      "get_plan": {
+        "title": "获取当前计划",
+        "description": "查询某一个星期当前配置的计划，结果显示在状态实体与通知中。",
+        "data": {
+          "week": "星期"
+        }
+      },
+      "set_mode": {
+        "title": "设置 EMS 模式",
+        "description": "general=设备自发自用，mqtt_ctrl=MQTT 功率控制，tou_plan=分时计划。",
+        "data": {
+          "mode": "EMS 模式"
+        }
+      },
+      "reboot": {
+        "title": "重启设备",
+        "data": {
+          "confirm": "确认重启"
+        }
+      }
+    },
+    "abort": {
+      "empty_week_plan": "没有任何星期被指定日计划，未下发",
+      "get_plan_failed": "设备未应答计划查询"
+    }
+  },
+  "services": {
+    "set_tou_day_plan": {
+      "name": "下发 TOU 日计划",
+      "description": "向设备下发某一天的日计划 (day1..day8)。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" },
+        "day_idx": { "name": "日计划索引", "description": "1..8" },
+        "day_plan": { "name": "日计划", "description": "时间段列表（最多 12 段）" }
+      }
+    },
+    "set_tou_week_plan": {
+      "name": "下发 TOU 周计划",
+      "description": "下发星期与日计划的映射关系。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" },
+        "week_plan": { "name": "周计划", "description": "{week:[...], day_idx:N} 列表" }
+      }
+    },
+    "get_tou_plan": {
+      "name": "获取 TOU 计划",
+      "description": "查询某一个星期已配置的计划。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" },
+        "week": { "name": "星期", "description": "Mon..Sun" }
+      }
+    },
+    "set_ems_mode": {
+      "name": "设置 EMS 模式",
+      "description": "切换 EMS 模式 (general / mqtt_ctrl / tou_plan)。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" },
+        "mode": { "name": "模式", "description": "general、mqtt_ctrl 或 tou_plan" }
+      }
+    },
+    "reboot": {
+      "name": "重启设备",
+      "description": "向设备发送 RESTART 指令。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" }
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Hoymiles Micro Storage",
+  "render_readme": true,
+  "homeassistant": "2023.8.0",
+  "country": ["CN", "DE", "NL", "US"]
+}

@@ -1,0 +1,43 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- Test / coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# --- Home Assistant runtime artifacts (never commit these) ---
+home-assistant.log
+home-assistant_v2.db
+home-assistant_v2.db-*
+.storage/
+*.db
+*.db-shm
+*.db-wal
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- HACS / build outputs ---
+hoymiles.zip
+*.zip

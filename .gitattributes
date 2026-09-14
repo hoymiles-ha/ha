@@ -1,0 +1,26 @@
+# Normalize line endings so the repo behaves the same on Windows and Linux.
+# Home Assistant runs on Linux; text assets should always be LF in the repo.
+
+* text=auto
+
+*.py    text eol=lf
+*.js    text eol=lf
+*.json  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+.gitignore  text eol=lf
+
+# Windows-only tooling: keep CRLF for PowerShell scripts.
+*.ps1   text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+
+# Binary assets
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.zip   binary
