@@ -214,7 +214,13 @@ HA 自带能源仪表盘有 Sankey 风格的「能量分布」卡片，但节点
 | `hoymiles.set_ems_mode` | 切换 EMS 模式 |
 | `hoymiles.reboot` | 重启设备 |
 
-目标可用 `dev_id` 字符串，或在 UI 中直接选设备（`target.device`）。
+目标设备二选一：
+
+- **`device_id`** —— 在 UI 里从设备下拉中选择（推荐，自动补全）
+- **`dev_id`** —— 直接填设备标识字符串，如 `MSA-280520260806`
+
+> ⚠️ 服务**不支持** `target.device` 这种写法 —— HA 明确禁止在服务的 `target`
+> 下使用 device 过滤器，设备只能通过上面的 `device_id` 字段（device selector）指定。
 
 示例：
 
@@ -226,6 +232,14 @@ data:
   day_plan:
     - {mode: 1, ts: 0, te: 5, sh: 55, sl: 10, pc: 1000, pd: 1000}
     - {mode: 4, ts: 5, te: 96, sh: 55, sl: 10, pc: 1000, pd: 1000}
+```
+
+在 UI 里也可以这样选设备：
+
+```yaml
+service: hoymiles.reboot
+data:
+  device_id: 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d   # 从设备下拉里选
 ```
 
 ---

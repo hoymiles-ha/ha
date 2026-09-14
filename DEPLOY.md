@@ -188,14 +188,44 @@ Docker/Core：`docker cp` 或直接 `cp -r`。
 
 1. **设置 → 设备与服务 → 添加集成**
 2. 搜索 **Hoymiles Micro Storage**
-3. 集成会订阅 retained 的 `homeassistant/switch/+/config` 约 3 秒，把发现的设备列进下拉框
-   - 也可以直接手输 `dev_id`，形如 `MSA-280520260806`（= `<client_prefix>-<SN>`）
+3. 集成把发现的设备列进下拉框
+   - 也可以直接手输 `dev_id`，形如 `MSA-280520260806`（= `client_prefix-SN`）
 4. 选中 → 提交
 
 完成后会生成设备与实体（`sensor.*` / `binary_sensor.*`，entity_id 形如 `sensor.msa_280520260806_<key>`）。
 
 > 固件已通过 MQTT Discovery 注册的实体（`switch` / `ems_mode` / `power_ctrl` / `soc` / `bat_power` / `output_power` / `reboot`）
 > 集成**刻意不重复创建**，避免同一数据出现两个实体。
+
+#### 下拉框里的设备是怎么来的
+
+**不是网络扫描，而是订阅 MQTT 的 retained discovery 消息。**
+实现见 `mqtt_util.async_discover_dev_ids()`：
+
+| 环节 | 行为 |
+|---|---|
+| 订阅的 topic | `homeassistant/switch/+/config`（`const.T_DISCOVERY`） |
+| 取值方式 | topic 按 `/` 切分，取**第 3 段**作为 `dev_id` |
+| 收集窗口 | **只订阅 3 秒**，之后取消订阅 |
+| 去重排序 | `sorted(set(...))` |
+| 过滤 | 已配置过的设备会从下拉框中排除 |
+
+因此"能否被扫到"只取决于三件事：
+
+1. 设备**曾经连上**这个 broker 并发布过 discovery 消息（qos 1 / **retain=true**）
+2. broker **保留了** retained 消息
+3. HA 的 MQTT 集成连的是**同一个** broker
+
+由此有两个推论：
+
+- **设备掉线也会出现在下拉框里** —— 只要 broker 还留着 retained 消息。这正是用 retained 而非"在线扫描"的好处。
+- **broker 重启且未开启持久化时，掉线的设备会消失**，直到它重连补发一次。
+  Mosquitto 建议开 `persistence true`（HAOS 的 Mosquitto add-on 默认已开）。
+
+> **下拉框只显示 1 项不代表只发现 1 台**：下拉是折叠的，点开才看到全部。
+>
+> 想确认完整清单，用 MQTT 工具订阅 `homeassistant/switch/+/config`
+> 看有多少条 retained 消息即可。
 
 ### 3.2 可用服务
 
@@ -206,6 +236,29 @@ Docker/Core：`docker cp` 或直接 `cp -r`。
 | `hoymiles.get_tou_plan` | 查询某天计划 |
 | `hoymiles.set_ems_mode` | 切换 EMS 模式 |
 | `hoymiles.reboot` | 重启设备 |
+
+**目标设备二选一：**
+
+- **`device_id`** —— 在 UI 里从设备下拉中选择（推荐，自动补全）
+- **`dev_id`** —— 直接填设备标识字符串，如 `MSA-280520260806`
+
+> ⚠️ **不要用 `target.device`。** HA 的 hassfest 明确禁止在服务的 `target`
+> 下使用 device 过滤器（`script/hassfest/services.py` 的
+> `raise_on_target_device_filter`：*"Services do not support device filters on
+> target, use a device selector instead"*）。`target` 下只允许 `entity`。
+> 设备必须通过 `device_id` 字段（device selector）指定。
+
+```yaml
+# 方式一：用设备下拉（推荐）
+service: hoymiles.reboot
+data:
+  device_id: 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d
+
+# 方式二：用设备标识
+service: hoymiles.reboot
+data:
+  dev_id: MSA-280520260806
+```
 
 ### 3.3 两张内置卡片（**无需手动添加资源**）
 
@@ -435,10 +488,38 @@ powershell -ExecutionPolicy Bypass -File scripts\make_brand_icon.ps1
 
 ### 5.3 添加集成时下拉框是空的
 
-下拉框来自 retained 的 `homeassistant/switch/+/config`。
-若为空：确认固件已连上同一 broker 并发布过 discovery，然后**手动输入 `dev_id`**。
+下拉框来自 retained 的 `homeassistant/switch/+/config`（原理见 [3.1](#下拉框里的设备是怎么来的)）。
 
-### 5.4 桑基图空白 / 报错
+按顺序排查：
+
+1. **设备是否连的是同一个 broker？** 最常见的原因。用 MQTT 工具订阅
+   `homeassistant/switch/+/config`，看有没有 retained 消息。
+2. **broker 是否保留了 retained 消息？** broker 重启且未开持久化时会丢。
+   Mosquitto 确认 `persistence true`，然后让设备重连一次补发。
+3. **3 秒窗口够不够？** 订阅窗口是固定的 3 秒；网络慢或 retained 消息多时
+   可能来不及收全，重试一次。
+4. 实在不行就**手动输入 `dev_id`**（`client_prefix-SN`），不依赖发现。
+
+> 下拉框**折叠**时只显示 1 项 —— 点开才能看到全部设备，别误判成"只发现一台"。
+
+### 5.4 添加集成时显示 `Translation error: UNCLOSED_TAG`
+
+**已修复的旧版本问题。** 早期版本的翻译文本里含有用反引号包裹的尖括号：
+`` `<client_prefix>-<SN>` ``。HA 前端把描述按 HTML 解析，
+`<client_prefix>` 被当成未闭合标签，于是报 `UNCLOSED_TAG`
+（hassfest 的对应报错是 *"the string should not contain HTML"*）。
+
+**处理：更新到含该修复的版本。**
+
+- HACS 安装：HACS → 集成 → 更新 → **完整重启 HA Core**
+- 手动安装：覆盖 `custom_components/hoymiles/` → **完整重启 HA Core**
+- 临时绕过：直接把 HA 上 `custom_components/hoymiles/translations/zh-Hans.json`
+  里的 `client_prefix-SN` 相关文本改成不含尖括号的写法，然后重启
+
+> 注意：**只重启不换文件是没用的**，必须让新文件先落地。
+> 重启后浏览器再 `Ctrl` + `F5` 清一下前端缓存。
+
+### 5.5 桑基图空白 / 报错
 
 | 提示 | 原因与处理 |
 |---|---|
