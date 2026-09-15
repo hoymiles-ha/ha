@@ -1,12 +1,12 @@
 {
   "domain": "hoymiles",
   "name": "Hoymiles Micro Storage",
-  "codeowners": ["@ls199303"],
+  "codeowners": ["@hoymiles-ha"],
   "config_flow": true,
   "dependencies": ["mqtt", "http", "frontend"],
-  "documentation": "https://github.com/ls199303/ha",
+  "documentation": "https://github.com/hoymiles-ha/ha",
   "integration_type": "hub",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/ls199303/ha/issues",
+  "issue_tracker": "https://github.com/hoymiles-ha/ha/issues",
   "version": "0.1.2"
 }

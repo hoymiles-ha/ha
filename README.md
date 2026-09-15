@@ -44,7 +44,7 @@
 ### 方式 A：HACS（推荐）
 
 1. HACS → 集成 → 右上 ⋮ → **自定义存储库**
-2. 填入仓库地址 `https://github.com/ls199303/ha`，类别选择 **Integration**
+2. 填入仓库地址 `https://github.com/hoymiles-ha/ha`，类别选择 **Integration**
 3. 搜索 `Hoymiles Micro Storage` → **下载**
 4. **完整重启 Home Assistant Core**（不是 reload config entry）
 

@@ -8,7 +8,7 @@
 4. [在 GitHub 更新文件后，用户在 HA 上应用新版本](#4-更新文件后如何在-ha-上应用新版本)
 
 > 终端命令以 PowerShell 为例，路径按需替换。
-> 文中仓库地址统一用 `ls199303/ha`，如换成别的仓库请同步修改
+> 文中仓库地址统一用 `hoymiles-ha/ha`，如换成别的仓库请同步修改
 > [三处 URL](#仓库-url-出现在哪三处)。
 
 ---
@@ -72,7 +72,7 @@ foreach ($f in @("LICENSE","README.md","hacs.json",".gitignore",
 
 ### 1.1 创建仓库
 
-在 https://github.com/new 新建一个 **public** 仓库，例如 `ls199303/ha`。
+在 https://github.com/new 新建一个 **public** 仓库，例如 `hoymiles-ha/ha`。
 
 - 建议勾选 **Add a README file = 否**（我们本地已有 README，避免冲突）
 - 必须 **public**：HACS 通过 GitHub API 拉取，私有仓库需要额外配 token
@@ -86,7 +86,7 @@ git init -b main
 git add .
 git commit -m "Initial release 0.1.0"
 
-git remote add origin https://github.com/ls199303/ha.git
+git remote add origin https://github.com/hoymiles-ha/ha.git
 git push -u origin main
 ```
 
@@ -156,7 +156,7 @@ HACS 一共 9 项检查，常见拦截原因：
 2. 切到 **集成** 分类
 3. 右上角 **⋮** → **自定义存储库**
 4. 填写：
-   - **存储库**：`https://github.com/ls199303/ha`
+   - **存储库**：`https://github.com/hoymiles-ha/ha`
    - **类别**：**Integration**
 5. 点 **添加**
 
