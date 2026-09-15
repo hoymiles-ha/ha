@@ -30,9 +30,28 @@
  *   range: today                  # optional (today|7d|30d|month)
  *   balancer_label: Loss          # optional label for the residual node
  *   show_toolbar: true            # optional
+ *   ribbon_gap: 3                 # optional px of white line between ribbons
+ *   ribbon_opacity: 0.5           # optional ribbon opacity (0..1)
+ *   icons:                        # optional per-node emoji overrides
+ *     pv: "☀️"
  *   statistics:                   # optional statistic_id overrides
  *     pv: sensor.my_pv_energy
  *     grid_in: [sensor.a, sensor.b]
+ *
+ * Layout: a direct source -> sink sankey (no hub). Each side is a single
+ * column of node boxes (icon + value + unit + share of the period) with a
+ * tinted label band facing the ribbons. Because the device meters every port
+ * separately, the routing behind the ribbons is NOT measured: it is estimated
+ * by spreading each source over the sinks proportionally (iterative
+ * proportional fitting), forbidding impossible loops such as
+ * battery-discharge -> battery-charge. Read the ribbons as a best-effort
+ * attribution, not as metered truth.
+ *
+ * Interaction: click a ribbon to highlight that single flow, or click a node
+ * box to highlight every ribbon that touches it. The rest of the diagram dims
+ * and a detail panel lists the involved flows. Click the same target again (or
+ * click empty diagram space) to clear. This is a pure view state: the numbers
+ * never change.
  * ========================================================================== */
 
 function _hmSankeyRegister() {
@@ -44,23 +63,54 @@ function _hmSankeyRegister() {
    * Layout constants — the SVG uses a fixed viewBox and is scaled by CSS,
    * so the diagram stays valid on any card width.
    * ------------------------------------------------------------------ */
-  const VB_W = 900;
-  const VB_H = 420;
-  const PAD_TOP = 28;
-  const PAD_BOTTOM = 12;
-  const LABEL_W = 150;
-  const NODE_W = 16;
-  const GAP = 10;
-  const SRC_X = LABEL_W;
-  const HUB_X = Math.round(VB_W / 2 - NODE_W / 2);
-  const SNK_X = VB_W - LABEL_W - NODE_W;
+  const VB_W = 1180;
+  const VB_H = 470;
+  const PAD_TOP = 14;
+  const PAD_BOTTOM = 14;
+  const SIDE_PAD = 12;
+  const NODE_W = 58;      // width of a node box (icon + value + %)
+  const CHIP_W = 186;     // tinted "label band" drawn next to a node box
+  const GAP = 14;         // vertical gap between node boxes
+  const MIN_NODE_H = 46;  // keep small nodes readable
+  const LEFT_X = SIDE_PAD;                    // left node box
+  const LEFT_CHIP_X = LEFT_X + NODE_W;        // left label band
+  const RIBBON_L = LEFT_CHIP_X + CHIP_W;      // ribbons start here
+  const RIGHT_X = VB_W - SIDE_PAD - NODE_W;   // right node box
+  const RIGHT_CHIP_X = RIGHT_X - CHIP_W;      // right label band
+  const RIBBON_R = RIGHT_CHIP_X;              // ribbons end here
   const CHART_H = VB_H - PAD_TOP - PAD_BOTTOM;
 
-  /* ------------------------------------------------------------------ *
-   * Node model
-   * ------------------------------------------------------------------ */
-  const HUB = { id: "hub", en: "Inverter", zh: "逆变器", color: "#6B7280" };
+  /** Emoji glyphs keep the card dependency-free (no icon font, no CDN). */
+  const ICONS = {
+    pv: "☀️",
+    grid_in: "⚡",
+    grid_out: "⚡",
+    bat_discharge: "🔋",
+    bat_charge: "🔋",
+    plug_in: "🔌",
+    plug_out: "🔌",
+    eps_in: "⚠️",
+    eps_out: "⚠️",
+    loss: "📉",
+    unmeasured: "❓",
+  };
 
+  /**
+   * Flows that cannot physically exist inside one accounting period:
+   * a medium cannot feed itself (battery discharge -> battery charge, ...).
+   */
+  const NO_LOOP = [
+    ["bat_discharge", "bat_charge"],
+    ["grid_in", "grid_out"],
+    ["plug_in", "plug_out"],
+    ["eps_in", "eps_out"],
+  ];
+
+  /* ------------------------------------------------------------------ *
+   * Node model — sources on the left, sinks on the right, ribbons in
+   * between. There is no artificial "hub" node: the diagram is a direct
+   * source -> sink sankey, exactly like an energy-flow reference chart.
+   * ------------------------------------------------------------------ */
   const NODE_DEFS = [
     // ---- sources (left) ----
     { id: "pv", side: "src", en: "PV", zh: "光伏", color: "#F5A623",
@@ -117,12 +167,26 @@ function _hmSankeyRegister() {
     return Number.isFinite(parsed) ? parsed : 0;
   }
 
-  function fmtEnergy(kwh) {
+  /** Split a kWh value into a readable number + unit (484 Wh / 4.74 kWh). */
+  function splitEnergy(kwh) {
     const v = num(kwh);
-    if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(2)} MWh`;
-    if (Math.abs(v) >= 100) return `${v.toFixed(0)} kWh`;
-    if (Math.abs(v) >= 10) return `${v.toFixed(1)} kWh`;
-    return `${v.toFixed(2)} kWh`;
+    const abs = Math.abs(v);
+    if (abs >= 1000) return { text: (v / 1000).toFixed(2), unit: "MWh" };
+    if (abs >= 1) return { text: v.toFixed(2), unit: "kWh" };
+    return { text: (v * 1000).toFixed(0), unit: "Wh" };
+  }
+
+  function fmtValue(kwh) {
+    return splitEnergy(kwh).text;
+  }
+
+  function fmtUnit(kwh) {
+    return splitEnergy(kwh).unit;
+  }
+
+  function fmtEnergy(kwh) {
+    const { text, unit } = splitEnergy(kwh);
+    return `${text} ${unit}`;
   }
 
   function fmtPct(part, total) {
@@ -168,6 +232,85 @@ function _hmSankeyRegister() {
     ].join(" ");
   }
 
+  /**
+   * Find the scale so that `sum(max(minH, value * scale))` fills `avail`.
+   * Tiny nodes keep a readable minimum height while the ribbons that leave
+   * them stay proportional to their real value.
+   */
+  function fitScale(values, avail) {
+    const n = values.length;
+    if (!n) return { scale: 0, minH: MIN_NODE_H };
+    const usable = Math.max(8, avail - (n - 1) * GAP);
+    const minH = Math.min(MIN_NODE_H, usable / n);
+    const sum = (s) => values.reduce((acc, v) => acc + Math.max(minH, v * s), 0);
+    let lo = 0;
+    let hi = Math.max(1e-6, usable / Math.max(1e-9, Math.min(...values)));
+    let guard = 0;
+    while (sum(hi) < usable && guard < 80) {
+      hi *= 2;
+      guard += 1;
+    }
+    for (let i = 0; i < 48; i += 1) {
+      const mid = (lo + hi) / 2;
+      if (sum(mid) < usable) lo = mid;
+      else hi = mid;
+    }
+    return { scale: hi, minH };
+  }
+
+  /**
+   * Split every source over every sink.
+   *
+   * The device meters each port on its own, so the real routing (which kWh
+   * went where) is NOT measured. We therefore spread each source over the
+   * sinks proportionally to the sink sizes and then run a few iterations of
+   * iterative proportional fitting so that both the row totals (sources) and
+   * the column totals (sinks) come out right. `forbidden` removes cells that
+   * cannot physically exist, e.g. a battery discharging into itself.
+   *
+   * The result is a best-effort estimate, which is why the card keeps an
+   * explicit "loss / unmetered" node instead of pretending to be exact.
+   */
+  function allocate(srcs, snks, forbidden) {
+    const n = srcs.length;
+    const m = snks.length;
+    const total = srcs.reduce((acc, v) => acc + v, 0) || 1;
+    const a = srcs.map(() => new Array(m).fill(0));
+    for (let i = 0; i < n; i += 1) {
+      for (let j = 0; j < m; j += 1) a[i][j] = (srcs[i] * snks[j]) / total;
+    }
+    for (const [i, j] of forbidden) {
+      if (i >= 0 && i < n && j >= 0 && j < m) a[i][j] = 0;
+    }
+    for (let it = 0; it < 8; it += 1) {
+      for (let i = 0; i < n; i += 1) {
+        const row = a[i].reduce((x, v) => x + v, 0);
+        if (row > 0) for (let j = 0; j < m; j += 1) a[i][j] *= srcs[i] / row;
+      }
+      for (let j = 0; j < m; j += 1) {
+        let col = 0;
+        for (let i = 0; i < n; i += 1) col += a[i][j];
+        if (col > 0) for (let i = 0; i < n; i += 1) a[i][j] *= snks[j] / col;
+      }
+    }
+    // Landing pass: make the source side exact so ribbon thickness always
+    // adds up to the value printed in the source node.
+    for (let i = 0; i < n; i += 1) {
+      const row = a[i].reduce((x, v) => x + v, 0);
+      if (row > 0) {
+        const k = srcs[i] / row;
+        for (let j = 0; j < m; j += 1) a[i][j] *= k;
+      } else if (m) {
+        const allowed = [];
+        for (let j = 0; j < m; j += 1) {
+          if (!forbidden.some(([fi, fj]) => fi === i && fj === j)) allowed.push(j);
+        }
+        if (allowed.length) a[i][allowed[0]] += srcs[i];
+      }
+    }
+    return a;
+  }
+
   /* ------------------------------------------------------------------ *
    * Card
    * ------------------------------------------------------------------ */
@@ -182,6 +325,7 @@ function _hmSankeyRegister() {
         _graph: { type: Object },
         _missing: { type: Array },
         _noStats: { type: Array },
+        _selected: { type: Object },
       };
     }
 
@@ -194,6 +338,14 @@ function _hmSankeyRegister() {
       this._missing = [];
       this._noStats = [];
       this._fetchToken = 0;
+      // Click-to-highlight state. Stored by node id / flow endpoints (not by
+      // array index) so it survives a data refresh that rebuilds the graph.
+      //   null                                  -> nothing highlighted
+      //   { kind: "flow", from, to }            -> one ribbon
+      //   { kind: "node", side: "src"|"snk", id } -> every ribbon of a node
+      this._selected = null;
+      // Unique prefix so several cards on one page do not clash on <clipPath> ids.
+      this._uid = `hm-sk-${Math.random().toString(36).slice(2, 9)}`;
     }
 
     static getConfigElement() {
@@ -219,6 +371,21 @@ function _hmSankeyRegister() {
         .pill.on { background: var(--primary-color); border-color: var(--primary-color);
                    color: var(--text-primary-color, #fff); }
         svg { display: block; width: 100%; height: auto; }
+        /* Click-to-highlight: the ribbons and node boxes are hit targets. */
+        svg .ribbon { cursor: pointer; transition: fill-opacity 0.18s ease; }
+        svg .node { cursor: pointer; transition: opacity 0.18s ease; }
+        svg .node.dim { opacity: 0.38; }
+        .detail { margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+                  background: var(--secondary-background-color, rgba(127, 127, 127, 0.12));
+                  border: 1px solid var(--divider-color); }
+        .dhead { font-size: 12.5px; font-weight: 500; color: var(--primary-text-color); }
+        .dflows { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; }
+        .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
+                color: var(--secondary-text-color); font-variant-numeric: tabular-nums; }
+        .chip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block;
+                  flex: 0 0 auto; }
+        .dhint { font-size: 11px; color: var(--secondary-text-color); margin-top: 6px;
+                 opacity: 0.8; }
         .legend { display: grid; gap: 4px 14px; margin-top: 8px;
                   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
         .item { display: flex; align-items: center; gap: 6px; font-size: 12.5px;
@@ -440,110 +607,250 @@ function _hmSankeyRegister() {
         return { empty: true, window };
       }
 
-      // Shared scale so source and sink heights line up with the hub.
-      const maxNodes = Math.max(srcs.length, snks.length);
-      const gaps = Math.max(0, maxNodes - 1) * GAP;
-      const usable = Math.max(20, CHART_H - gaps);
-      const scale = usable / total;
+      // Each column fills the chart height on its own: the left column stacks
+      // the sources, the right column the sinks.
+      const leftFit = fitScale(srcs.map((d) => d.value), CHART_H);
+      const rightFit = fitScale(snks.map((d) => d.value), CHART_H);
 
-      const stack = (items) => {
+      const stack = (items, fit) => {
         let y = PAD_TOP;
         return items.map((item) => {
-          const h = Math.max(2, item.value * scale);
+          const h = Math.max(fit.minH, item.value * fit.scale);
           const node = { ...item, y, h };
           y += h + GAP;
           return node;
         });
       };
 
-      const srcNodes = stack(srcs);
-      const snkNodes = stack(snks);
+      const srcNodes = stack(srcs, leftFit);
+      const snkNodes = stack(snks, rightFit);
 
-      // Ribbons: sources -> hub, stacked in node order.
-      const srcRibbons = [];
-      let srcCursor = PAD_TOP;
-      for (const node of srcNodes) {
-        srcRibbons.push({
-          path: ribbon(SRC_X + NODE_W, node.y, node.h, HUB_X, srcCursor, node.h),
-          color: node.color,
-          value: node.value,
-          label: node.label || this._label(node),
-        });
-        srcCursor += node.h + GAP;
+      // Estimate which source feeds which sink (ports are metered apart).
+      const indexOf = (arr, id) => arr.findIndex((x) => x.id === id);
+      const forbidden = [];
+      for (const [srcId, snkId] of NO_LOOP) {
+        const i = indexOf(srcNodes, srcId);
+        const j = indexOf(snkNodes, snkId);
+        if (i >= 0 && j >= 0) forbidden.push([i, j]);
       }
+      const matrix = allocate(
+        srcNodes.map((n) => n.value),
+        snkNodes.map((n) => n.value),
+        forbidden
+      );
 
-      const snkRibbons = [];
-      let snkCursor = PAD_TOP;
-      for (const node of snkNodes) {
-        snkRibbons.push({
-          path: ribbon(HUB_X + NODE_W, snkCursor, node.h, SNK_X, node.y, node.h),
-          color: node.color,
-          value: node.value,
-          label: node.label || this._label(node),
-        });
-        snkCursor += node.h + GAP;
+      // Ribbon thickness is value * scale and attaches centred on the node
+      // box, so a tiny node still gets a hairline ribbon.
+      const gapPx = num(cfg.ribbon_gap != null ? cfg.ribbon_gap : 3);
+      const flows = [];
+      const srcCursor = srcNodes.map(
+        (n) => n.y + n.h / 2 - (n.value * leftFit.scale) / 2
+      );
+      const snkCursor = snkNodes.map(
+        (n) => n.y + n.h / 2 - (n.value * rightFit.scale) / 2
+      );
+
+      for (let i = 0; i < srcNodes.length; i += 1) {
+        for (let j = 0; j < snkNodes.length; j += 1) {
+          const value = matrix[i][j];
+          if (!(value > 0)) continue;
+          const hL = value * leftFit.scale;
+          const hR = value * rightFit.scale;
+          if (hL < 0.7 && hR < 0.7) continue;
+          const insetL = hL > gapPx * 2.5 ? gapPx / 2 : 0;
+          const insetR = hR > gapPx * 2.5 ? gapPx / 2 : 0;
+          flows.push({
+            path: ribbon(
+              RIBBON_L, srcCursor[i] + insetL, Math.max(0.6, hL - insetL * 2),
+              RIBBON_R, snkCursor[j] + insetR, Math.max(0.6, hR - insetR * 2)
+            ),
+            color: srcNodes[i].color,
+            value,
+            srcId: srcNodes[i].id,
+            snkId: snkNodes[j].id,
+            from: srcNodes[i].label || this._label(srcNodes[i]),
+            to: snkNodes[j].label || this._label(snkNodes[j]),
+          });
+          srcCursor[i] += hL;
+          snkCursor[j] += hR;
+        }
       }
 
       return {
         empty: false,
         window,
         total,
-        scale,
+        outTotal: snkNodes.reduce((acc, n) => acc + n.value, 0),
         srcs: srcNodes,
         snks: snkNodes,
-        srcRibbons,
-        snkRibbons,
-        hub: { ...HUB, y: PAD_TOP, h: usable, label: this._label(HUB), value: total },
+        flows,
         hasBalancer: !!balancer,
       };
     }
 
     /* ------------------------------ rendering ---------------------------- */
 
-    _nodeLabel(node, anchorX, anchor) {
-      if (node.h < 16) return "";
-      const value = fmtEnergy(node.value);
-      const text = `${node.label || this._label(node)}  ·  ${value}`;
-      const y = node.y + node.h / 2 + 4;
-      return `<text x="${anchorX}" y="${y}" text-anchor="${anchor}" font-size="12.5"
-        fill="var(--primary-text-color, #212121)">${esc(text)}</text>`;
+    /**
+     * One node = a coloured box (icon + value + unit + share of the period)
+     * plus a tinted label band on the ribbon-facing side.
+     */
+    _nodeBox(node, boxX, chipX, chipAnchor, shareBase, info) {
+      const color = node.color;
+      const label = node.label || this._label(node);
+      const uid = `${this._uid}-${node.side}-${node.id}`;
+      const cx = boxX + NODE_W / 2;
+      const icon = (this._config.icons || {})[node.id] || ICONS[node.id] || "•";
+      const tall = node.h >= 76;
+      const inner = [];
+      const key = `${node.side}:${node.id}`;
+
+      // Selection: true when this node touches the highlighted flow(s).
+      const isSel = !!info && info.nodeKeys.has(key);
+      const isDim = !!info && !isSel;
+      const ring = isSel
+        ? `<rect x="${boxX - 2}" y="${node.y - 2}" width="${NODE_W + 4}"
+            height="${node.h + 4}" rx="8" fill="none"
+            stroke="var(--primary-text-color, #212121)" stroke-width="2.5"></rect>`
+        : "";
+
+      if (node.h >= 42) {
+        inner.push(`<text x="${cx}" y="${node.y + (tall ? 18 : 14)}" text-anchor="middle"
+          font-size="${tall ? 15 : 11}">${esc(icon)}</text>`);
+      }
+      if (tall) {
+        inner.push(`<text x="${cx}" y="${node.y + 43}" text-anchor="middle" font-size="17"
+          font-weight="600" fill="#fff">${esc(fmtValue(node.value))}</text>`);
+        inner.push(`<text x="${cx}" y="${node.y + 56}" text-anchor="middle" font-size="9.5"
+          fill="#fff" fill-opacity="0.85">${esc(fmtUnit(node.value))}</text>`);
+      } else if (node.h >= 30) {
+        inner.push(`<text x="${cx}" y="${node.y + 31}" text-anchor="middle" font-size="11.5"
+          font-weight="600" fill="#fff">${esc(fmtEnergy(node.value))}</text>`);
+      } else {
+        inner.push(`<text x="${cx}" y="${node.y + node.h / 2 + 4}" text-anchor="middle"
+          font-size="10.5" font-weight="600" fill="#fff">${esc(fmtEnergy(node.value))}</text>`);
+      }
+      if (node.h >= 40) {
+        inner.push(`<rect x="${boxX}" y="${node.y + node.h - 16}" width="${NODE_W}" height="16"
+          fill="#000" fill-opacity="0.14"></rect>`);
+        inner.push(`<text x="${cx}" y="${node.y + node.h - 4.5}" text-anchor="middle"
+          font-size="9.5" fill="#fff" fill-opacity="0.95">${esc(fmtPct(node.value, shareBase))}</text>`);
+      }
+
+      const chipTextX = chipAnchor === "end" ? chipX + CHIP_W - 12 : chipX + 12;
+      return `<g class="node${isDim ? " dim" : ""}" data-node="${esc(key)}">
+        <clipPath id="${uid}"><rect x="${boxX}" y="${node.y}" width="${NODE_W}"
+          height="${node.h}" rx="6"></rect></clipPath>
+        <rect x="${boxX}" y="${node.y}" width="${NODE_W}" height="${node.h}" rx="6"
+          fill="${color}"><title>${esc(`${label}: ${fmtEnergy(node.value)}`)}</title></rect>
+        <g clip-path="url(#${uid})">${inner.join("")}</g>
+        <rect x="${chipX}" y="${node.y}" width="${CHIP_W}" height="${node.h}" rx="4"
+          fill="${color}" fill-opacity="0.16"></rect>
+        <text x="${chipTextX}" y="${node.y + node.h / 2 + 4.5}" text-anchor="${chipAnchor}"
+          font-size="13" fill="var(--primary-text-color, #212121)">${esc(label)}</text>
+        ${ring}
+      </g>`;
+    }
+
+    /** True when `flow` should stay lit for the current selection. */
+    _flowSelected(flow, sel) {
+      if (!sel) return false;
+      if (sel.kind === "flow") return flow.srcId === sel.from && flow.snkId === sel.to;
+      return flow.srcId === sel.id || flow.snkId === sel.id;
+    }
+
+    /**
+     * Resolve `_selected` against the current graph.
+     * Returns null when nothing is highlighted (or the highlight no longer
+     * matches any ribbon, e.g. after the device stopped using that port).
+     */
+    _selectionInfo(graph) {
+      const sel = this._selected;
+      if (!sel || !graph) return null;
+      const flows = graph.flows.filter((f) => this._flowSelected(f, sel));
+      if (!flows.length) return null;
+      let node = null;
+      if (sel.kind === "node") {
+        node = [...graph.srcs, ...graph.snks]
+          .find((n) => n.id === sel.id && n.side === sel.side) || null;
+        if (!node) return null;
+      }
+      const nodeKeys = new Set();
+      for (const f of flows) {
+        nodeKeys.add(`src:${f.srcId}`);
+        nodeKeys.add(`snk:${f.snkId}`);
+      }
+      return { sel, flows, node, nodeKeys };
     }
 
     _chart(graph) {
+      const base = num(
+        this._config.ribbon_opacity != null ? this._config.ribbon_opacity : 0.5
+      );
+      const info = this._selectionInfo(graph);
       const parts = [];
 
-      for (const r of graph.srcRibbons) {
-        parts.push(`<path d="${r.path}" fill="${r.color}" fill-opacity="0.28"></path>`);
+      // Ribbons first so the node boxes are drawn on top of them.
+      for (const f of graph.flows) {
+        const isSel = !!info && info.flows.indexOf(f) >= 0;
+        const opacity = !info ? base : isSel ? Math.min(1, base + 0.4) : Math.max(0.06, base * 0.16);
+        const stroke = isSel ? ` stroke="${f.color}" stroke-opacity="0.95" stroke-width="1"` : "";
+        parts.push(`<path class="ribbon" d="${f.path}" fill="${f.color}"
+          fill-opacity="${opacity.toFixed(3)}" data-flow="${esc(f.srcId)}|${esc(f.snkId)}"${stroke}
+          ><title>${esc(`${f.from} → ${f.to}: ${fmtEnergy(f.value)}`)}</title></path>`);
       }
-      for (const r of graph.snkRibbons) {
-        parts.push(`<path d="${r.path}" fill="${r.color}" fill-opacity="0.28"></path>`);
-      }
-
-      const rect = (node, x) => {
-        const title = `${node.label || this._label(node)}: ${fmtEnergy(node.value)}`;
-        return `<rect x="${x}" y="${node.y}" width="${NODE_W}" height="${node.h}"
-          rx="3" fill="${node.color}"><title>${esc(title)}</title></rect>`;
-      };
-
-      for (const node of graph.srcs) parts.push(rect(node, SRC_X));
-      for (const node of graph.snks) parts.push(rect(node, SNK_X));
-      parts.push(rect(graph.hub, HUB_X));
 
       for (const node of graph.srcs) {
-        parts.push(this._nodeLabel(node, SRC_X - 8, "end"));
+        parts.push(this._nodeBox(node, LEFT_X, LEFT_CHIP_X, "start", graph.total, info));
       }
       for (const node of graph.snks) {
-        parts.push(this._nodeLabel(node, SNK_X + NODE_W + 8, "start"));
+        parts.push(
+          this._nodeBox(node, RIGHT_X, RIGHT_CHIP_X, "end", graph.outTotal || graph.total, info)
+        );
       }
-
-      const hubY = graph.hub.y + graph.hub.h / 2 - 6;
-      parts.push(`<text x="${HUB_X + NODE_W / 2}" y="${hubY}" text-anchor="middle"
-        font-size="12.5" fill="var(--secondary-text-color, #727272)">${esc(graph.hub.label)}</text>`);
-      parts.push(`<text x="${HUB_X + NODE_W / 2}" y="${hubY + 15}" text-anchor="middle"
-        font-size="12" fill="var(--secondary-text-color, #727272)">${esc(fmtEnergy(graph.total))}</text>`);
 
       return `<svg viewBox="0 0 ${VB_W} ${VB_H}" role="img"
         aria-label="${esc(this._t("Energy flow", "能量流"))}">${parts.join("")}</svg>`;
+    }
+
+    /** Detail panel for the current highlight (empty when nothing is selected). */
+    _detailBar(graph) {
+      const info = this._selectionInfo(graph);
+      if (!info) return "";
+      const { flows, node, sel } = info;
+      const sum = flows.reduce((acc, f) => acc + f.value, 0);
+
+      let head;
+      if (node) {
+        const shareBase = sel.side === "src" ? graph.total : graph.outTotal || graph.total;
+        head = `${node.label || this._label(node)} · ${fmtEnergy(node.value)} · ${fmtPct(node.value, shareBase)}`;
+      } else {
+        const f = flows[0];
+        head = `${f.from} → ${f.to} · ${fmtEnergy(f.value)} · ${fmtPct(f.value, graph.total)}`;
+      }
+
+      const chips = flows
+        .slice()
+        .sort((a, b) => b.value - a.value)
+        .map((f) => {
+          const dir = node ? (sel.side === "src" ? "→" : "←") : "→";
+          const other = node
+            ? (sel.side === "src" ? f.to : f.from)
+            : `${f.from} → ${f.to}`;
+          return `<span class="chip"><i style="background:${f.color}"></i>${esc(
+            `${dir} ${other} ${fmtEnergy(f.value)}`
+          )}</span>`;
+        })
+        .join("");
+
+      const total = flows.length > 1
+        ? ` · ${esc(this._t("total", "合计"))} ${esc(fmtEnergy(sum))}`
+        : "";
+
+      return `<div class="detail">
+        <div class="dhead">${esc(head)}${total}</div>
+        <div class="dflows">${node ? chips : ""}</div>
+        <div class="dhint">${esc(this._t("Click again to clear.", "再次点击取消高亮。"))}</div>
+      </div>`;
     }
 
     _legend(graph) {
@@ -574,18 +881,51 @@ function _hmSankeyRegister() {
       return this._untrusted(`<div class="toolbar">${pills}${refresh}</div>`);
     }
 
+    _sameSelection(a, b) {
+      if (!a || !b || a.kind !== b.kind) return false;
+      if (a.kind === "flow") return a.from === b.from && a.to === b.to;
+      return a.side === b.side && a.id === b.id;
+    }
+
     _handleClick = (event) => {
-      const target = event.target.closest("[data-range]");
-      if (!target) return;
-      const value = target.dataset.range;
-      if (value === "__refresh") {
+      const rangeEl = event.target.closest("[data-range]");
+      if (rangeEl) {
+        const value = rangeEl.dataset.range;
+        if (value === "__refresh") {
+          this._fetch();
+          return;
+        }
+        if (value === this._range) return;
+        this._range = value;
+        this._graph = null;
+        this._selected = null;
         this._fetch();
         return;
       }
-      if (value === this._range) return;
-      this._range = value;
-      this._graph = null;
-      this._fetch();
+
+      // Click-to-highlight: a ribbon, or any ribbon of a node box.
+      const flowEl = event.target.closest("[data-flow]");
+      const nodeEl = event.target.closest("[data-node]");
+      if (flowEl || nodeEl) {
+        let next;
+        if (flowEl) {
+          const [from, to] = String(flowEl.dataset.flow).split("|");
+          next = { kind: "flow", from, to };
+        } else {
+          const raw = String(nodeEl.dataset.node);
+          const at = raw.indexOf(":");
+          next = { kind: "node", side: raw.slice(0, at), id: raw.slice(at + 1) };
+        }
+        this._selected = this._sameSelection(this._selected, next) ? null : next;
+        this.requestUpdate();
+        return;
+      }
+
+      // Clicking empty diagram space clears the highlight.
+      if (this._selected && event.target.closest("svg")) {
+        this._selected = null;
+        this.requestUpdate();
+      }
     };
 
     render() {
@@ -607,6 +947,7 @@ function _hmSankeyRegister() {
       } else {
         body = html`
           ${this._untrusted(this._chart(this._graph))}
+          ${this._untrusted(this._detailBar(this._graph))}
           ${this._untrusted(this._legend(this._graph))}
         `;
       }
@@ -638,6 +979,12 @@ function _hmSankeyRegister() {
           ${body}
           ${notes.length
             ? html`<div class="note">${notes.map((n) => html`${n}<br/>`)}</div>`
+            : ""}
+          ${this._graph && !this._graph.empty && !this._selected
+            ? html`<div class="note">${this._t(
+                "Tip: click a ribbon or a node box to highlight that part of the flow.",
+                "提示：点击彩带或左右节点，即可高亮该部分能量流向。"
+              )}</div>`
             : ""}
           ${this._graph && !this._graph.empty && this._graph.hasBalancer
             ? html`<div class="note">${this._t(
