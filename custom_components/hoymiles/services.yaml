@@ -133,3 +133,57 @@ reboot:
       example: "MSA-280520260806"
       selector:
         text:
+
+set_phase_output_power:
+  name: Set multi phase output power
+  description: >-
+    Set the output power limit of all three phases at once. The firmware expects a
+    complete JSON object, so all three phases are required.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "MSA-280520260806"
+      selector:
+        text:
+    phase_a:
+      name: Phase A limit
+      description: Output power limit of phase A in watt.
+      required: true
+      example: 800
+      selector:
+        number:
+          min: 100
+          max: 2500
+          step: 1
+          mode: box
+    phase_b:
+      name: Phase B limit
+      description: Output power limit of phase B in watt.
+      required: true
+      example: 800
+      selector:
+        number:
+          min: 100
+          max: 2500
+          step: 1
+          mode: box
+    phase_c:
+      name: Phase C limit
+      description: Output power limit of phase C in watt.
+      required: true
+      example: 800
+      selector:
+        number:
+          min: 100
+          max: 2500
+          step: 1
+          mode: box

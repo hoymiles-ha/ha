@@ -121,6 +121,11 @@ class HoymilesBinarySensor(CoordinatorEntity[HoymilesCoordinator], BinarySensorE
         )
 
     @property
+    def available(self) -> bool:
+        """Return True while the device is still pushing data."""
+        return self.coordinator.available
+
+    @property
     def is_on(self) -> bool | None:
         """Return the current state."""
         value_fn = self.entity_description.value_fn

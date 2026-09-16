@@ -16,6 +16,7 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import HoymilesCoordinator
+from .discovery_override import FirmwareDiscoveryPatcher
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,9 +29,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = HoymilesCoordinator(hass, dev_id)
     await coordinator.async_setup()
 
+    # Patch the firmware's retained discovery payloads so the entities it
+    # registers itself comply with Home Assistant's per-domain schemas.  See
+    # discovery_override.py for the list of patches; it is a no-op once the
+    # firmware ships compliant payloads.
+    patcher = FirmwareDiscoveryPatcher(hass, dev_id)
+    await patcher.async_setup()
+
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
+        "patcher": patcher,
         "dev_id": dev_id,
     }
 
@@ -47,6 +56,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unloaded:
         entry_data = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
         if entry_data:
+            entry_data["patcher"].async_shutdown()
             await entry_data["coordinator"].async_shutdown()
     return unloaded
 

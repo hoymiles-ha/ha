@@ -19,7 +19,13 @@ from homeassistant.helpers import device_registry as dr
 from . import mqtt_util
 from .const import (
     DOMAIN,
+    PHASE_A,
+    PHASE_B,
+    PHASE_C,
+    PHASE_POWER_MAX,
+    PHASE_POWER_MIN,
     T_EMS_MODE_CMD,
+    T_PHASE_OUTPUT_POWER_SET,
     T_REBOOT,
     T_TOU_DAY_SET,
     T_TOU_GET,
@@ -42,6 +48,7 @@ SERVICE_SET_TOU_DAY_PLAN = "set_tou_day_plan"
 SERVICE_SET_TOU_WEEK_PLAN = "set_tou_week_plan"
 SERVICE_GET_TOU_PLAN = "get_tou_plan"
 SERVICE_SET_EMS_MODE = "set_ems_mode"
+SERVICE_SET_PHASE_OUTPUT_POWER = "set_phase_output_power"
 SERVICE_REBOOT = "reboot"
 
 DAY_PLAN_ITEM = vol.Schema(
@@ -114,6 +121,29 @@ SCHEMA_SET_EMS_MODE = vol.Schema(
 )
 
 SCHEMA_REBOOT = vol.Schema({**DEVICE_FIELDS})
+
+_PHASE_POWER = vol.All(
+    vol.Coerce(int), vol.Range(min=PHASE_POWER_MIN, max=PHASE_POWER_MAX)
+)
+
+# The firmware only accepts a complete {"phase_a":..,"phase_b":..,"phase_c":..}
+# object (protocol §15), so all three phases are mandatory here.
+SCHEMA_SET_PHASE_OUTPUT_POWER = vol.Schema(
+    {
+        **DEVICE_FIELDS,
+        vol.Required(PHASE_A): _PHASE_POWER,
+        vol.Required(PHASE_B): _PHASE_POWER,
+        vol.Required(PHASE_C): _PHASE_POWER,
+    }
+)
+
+
+def _find_coordinator(hass: HomeAssistant, dev_id: str) -> Any | None:
+    """Return the loaded coordinator for a device id, if there is one."""
+    for entry_data in hass.data.get(DOMAIN, {}).values():
+        if isinstance(entry_data, dict) and entry_data.get("dev_id") == dev_id:
+            return entry_data.get("coordinator")
+    return None
 
 
 def _resolve_dev_id(hass: HomeAssistant, data: dict[str, Any]) -> str:
@@ -195,6 +225,24 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             hass, mqtt_util.topic(T_EMS_MODE_CMD, dev_id), str(call.data["mode"])
         )
 
+    async def _handle_set_phase_output_power(call: ServiceCall) -> None:
+        dev_id = _resolve_dev_id(hass, dict(call.data))
+        values = {
+            PHASE_A: int(call.data[PHASE_A]),
+            PHASE_B: int(call.data[PHASE_B]),
+            PHASE_C: int(call.data[PHASE_C]),
+        }
+
+        coordinator = _find_coordinator(hass, dev_id)
+        if coordinator is not None:
+            await coordinator.async_set_phase_outputs(values)
+            return
+
+        # Entry not loaded (or a dev_id typed by hand): publish directly.
+        await mqtt_util.async_publish(
+            hass, mqtt_util.topic(T_PHASE_OUTPUT_POWER_SET, dev_id), values
+        )
+
     async def _handle_reboot(call: ServiceCall) -> None:
         dev_id = _resolve_dev_id(hass, dict(call.data))
         await mqtt_util.async_publish(
@@ -212,5 +260,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SET_EMS_MODE, _handle_set_ems_mode, SCHEMA_SET_EMS_MODE
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_PHASE_OUTPUT_POWER,
+        _handle_set_phase_output_power,
+        SCHEMA_SET_PHASE_OUTPUT_POWER,
     )
     hass.services.async_register(DOMAIN, SERVICE_REBOOT, _handle_reboot, SCHEMA_REBOOT)

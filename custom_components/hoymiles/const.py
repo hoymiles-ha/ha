@@ -14,7 +14,7 @@ NAME: Final = "Hoymiles Micro Storage"
 
 CONF_DEV_ID: Final = "dev_id"
 
-PLATFORMS: Final = ["sensor", "binary_sensor"]
+PLATFORMS: Final = ["sensor", "binary_sensor", "number"]
 
 # ---------------------------------------------------------------------------
 # Topic templates (device -> HA state, HA -> device command)
@@ -28,6 +28,7 @@ T_SWITCH_SET: Final = "homeassistant/switch/{dev_id}/set"
 T_REBOOT: Final = "homeassistant/button/{dev_id}/reboot/trigger"
 T_POWER_CTRL_SET: Final = "homeassistant/number/{dev_id}/power_ctrl/set"
 T_OUTPUT_POWER_SET: Final = "homeassistant/number/{dev_id}/output_power/set"
+T_PHASE_OUTPUT_POWER_SET: Final = "homeassistant/number/{dev_id}/phase_output_power/set"
 
 T_TOU_DAY_SET: Final = "homeassistant/sensor/{dev_id}/tou_day_plan/set"
 T_TOU_WEEK_SET: Final = "homeassistant/sensor/{dev_id}/tou_week_plan/set"
@@ -38,6 +39,41 @@ T_TOU_STATUS: Final = "homeassistant/sensor/{dev_id}/tou_plan/status"
 
 # Discovery topic used for auto-discovery in the config flow.
 T_DISCOVERY: Final = "homeassistant/switch/+/config"
+
+# ---------------------------------------------------------------------------
+# Firmware discovery patching (see discovery_override.py)
+# ---------------------------------------------------------------------------
+DISCOVERY_PREFIX: Final = "homeassistant"
+
+# Catches every discovery config the firmware publishes for one device.
+T_FIRMWARE_DISCOVERY: Final = "homeassistant/+/{dev_id}/config"
+
+# Availability topic owned by the integration.  It is only referenced by the
+# patched discovery payloads, so it never collides with firmware topics.
+T_AVAILABILITY: Final = "hoymiles/{dev_id}/availability"
+PAYLOAD_AVAILABLE: Final = "online"
+PAYLOAD_NOT_AVAILABLE: Final = "offline"
+
+# State topic owned by the integration for the EMS mode select.  The firmware
+# select has no state_topic of its own, so it would read "unknown" after every
+# HA restart.  This topic carries the last commanded value (retained) and is
+# refined by the mode the device reports in ``system/state``.
+#
+# It cannot point at ``system/state`` directly: that topic is only pushed every
+# 5 minutes, and the bundled TOU card gates its UI on the select state, so a
+# freshly issued command would take up to 5 minutes to show up.
+T_EMS_MODE_STATE: Final = "hoymiles/{dev_id}/ems_mode/state"
+
+# ---------------------------------------------------------------------------
+# Multi phase output power (protocol §8 command, §15 payload)
+# ---------------------------------------------------------------------------
+PHASE_A: Final = "phase_a"
+PHASE_B: Final = "phase_b"
+PHASE_C: Final = "phase_c"
+PHASES: Final = (PHASE_A, PHASE_B, PHASE_C)
+PHASE_POWER_MIN: Final = 100
+PHASE_POWER_MAX: Final = 2500
+PHASE_POWER_STEP: Final = 1
 
 # ---------------------------------------------------------------------------
 # EMS modes
@@ -69,6 +105,25 @@ SRC_SYSTEM: Final = "system"
 SRC_TOU_STATUS: Final = "tou_status"
 SRC_TOU_DAY_ACK: Final = "tou_day_ack"
 SRC_TOU_WEEK_ACK: Final = "tou_week_ack"
+
+# ---------------------------------------------------------------------------
+# Availability / staleness (protocol §22 pushes every 1 s, §23/§24 every 5 min)
+# ---------------------------------------------------------------------------
+# How often the availability watchdog re-evaluates source freshness.
+AVAILABILITY_WATCHDOG_SECONDS: Final = 30
+
+# A ``system/state`` report arriving right after an EMS mode command may still
+# carry the previous mode (the topic is only pushed every 5 minutes).  Such
+# reports are ignored for this long so the select does not flip back.
+EMS_MODE_ECHO_GUARD_SECONDS: Final = 30
+
+# A source is alive while its last message is younger than its window.
+# Event driven topics (TOU ack/status) are excluded on purpose.
+SOURCE_STALE_SECONDS: Final = {
+    SRC_QUICK: 120,
+    SRC_DEVICE: 660,
+    SRC_SYSTEM: 660,
+}
 
 # TOU ack status codes (protocol §17 / §19)
 TOU_DAY_ACK_STATUS: Final = {

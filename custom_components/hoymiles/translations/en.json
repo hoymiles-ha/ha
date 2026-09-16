@@ -128,6 +128,16 @@
       "fields": {
         "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." }
       }
+    },
+    "set_phase_output_power": {
+      "name": "Set multi phase output power",
+      "description": "Set the output power limit of all three phases at once.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." },
+        "phase_a": { "name": "Phase A limit", "description": "Output power limit in watt (100..2500)." },
+        "phase_b": { "name": "Phase B limit", "description": "Output power limit in watt (100..2500)." },
+        "phase_c": { "name": "Phase C limit", "description": "Output power limit in watt (100..2500)." }
+      }
     }
   }
 }

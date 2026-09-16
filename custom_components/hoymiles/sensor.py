@@ -11,7 +11,7 @@ firmware already registers them through MQTT discovery.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Final
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -87,41 +87,82 @@ def s(field: str, default: Any = None) -> Callable[[dict], Any]:
     return _fn
 
 
+# Documented order of the ``grid`` array in device/state (protocol §23).
+GRID_TYPES: Final = ("grid_on", "grid_off", "inv")
+
+
 def grid(index: int, field: str, default: Any = None) -> Callable[[dict], Any]:
-    """Read ``grid[index].<field>`` from device/state (0=on, 1=off, 2=inv)."""
+    """Read ``grid[index].<field>`` from device/state (0=on, 1=off, 2=inv).
+
+    Entries are matched by their ``type`` field instead of by position, so the
+    energy dashboard and the statistics built on these sensors keep working even
+    if the firmware ever reorders or filters the array.  The documented order is
+    only used as a fallback for entries without a ``type``.
+    """
 
     def _fn(data: dict[str, Any]) -> Any:
         items = _payload(data, SRC_DEVICE).get("grid")
-        if not isinstance(items, list) or len(items) <= index:
+        if not isinstance(items, list):
             return default
-        item = items[index]
-        return item.get(field, default) if isinstance(item, dict) else default
+
+        wanted = GRID_TYPES[index] if 0 <= index < len(GRID_TYPES) else None
+        if wanted is not None:
+            for item in items:
+                if isinstance(item, dict) and item.get("type") == wanted:
+                    return item.get(field, default)
+
+        if len(items) > index and isinstance(items[index], dict):
+            return items[index].get(field, default)
+
+        return default
 
     return _fn
 
 
 def pv(index: int, default: Any = None) -> Callable[[dict], Any]:
-    """Read the power of PV port ``index`` (0-based) from device/state."""
+    """Read the power of PV port ``index`` (0-based) from device/state.
+
+    Ports are matched by ``id`` (1-based in the protocol), so a missing entry
+    cannot shift the value of every following port.
+    """
 
     def _fn(data: dict[str, Any]) -> Any:
         items = _payload(data, SRC_DEVICE).get("pvs")
-        if not isinstance(items, list) or len(items) <= index:
+        if not isinstance(items, list):
             return default
-        item = items[index]
-        return item.get("p", default) if isinstance(item, dict) else default
+
+        for item in items:
+            if isinstance(item, dict) and item.get("id") == index + 1:
+                return item.get("p", default)
+
+        if len(items) > index and isinstance(items[index], dict):
+            return items[index].get("p", default)
+
+        return default
 
     return _fn
 
 
 def pack(index: int, field: str, default: Any = None) -> Callable[[dict], Any]:
-    """Read ``packs[index].<field>`` from device/state (0-based)."""
+    """Read ``packs[index].<field>`` from device/state (0-based).
+
+    Packs are matched by ``id`` (1-based in the protocol), so a missing pack
+    cannot shift the values of the remaining ones.
+    """
 
     def _fn(data: dict[str, Any]) -> Any:
         items = _payload(data, SRC_DEVICE).get("packs")
-        if not isinstance(items, list) or len(items) <= index:
+        if not isinstance(items, list):
             return default
-        item = items[index]
-        return item.get(field, default) if isinstance(item, dict) else default
+
+        for item in items:
+            if isinstance(item, dict) and item.get("id") == index + 1:
+                return item.get(field, default)
+
+        if len(items) > index and isinstance(items[index], dict):
+            return items[index].get(field, default)
+
+        return default
 
     return _fn
 
@@ -505,6 +546,11 @@ class HoymilesSensor(CoordinatorEntity[HoymilesCoordinator], SensorEntity):
             name=dev_id,
             manufacturer=MANUFACTURER,
         )
+
+    @property
+    def available(self) -> bool:
+        """Return True while the device is still pushing data."""
+        return self.coordinator.available
 
     @property
     def native_value(self) -> Any:

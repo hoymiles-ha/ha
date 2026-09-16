@@ -37,6 +37,40 @@
 
 `<dev_id>` = `<mqtt_param.client_prefix>-<SN>`（未配置前缀时仅 SN）。
 
+### 集成会「补丁」固件的 discovery 报文
+
+固件写死的 discovery 报文并不完全符合 Home Assistant 的各域 schema（例如
+`switch` 域缺少 `command_topic`、`soc`/`bat_p` 缺 `state_class`），而 discovery
+**本质上就是 topic 上的一条 retained 报文**。因此集成会订阅本设备的
+`homeassistant/+/<dev_id>/config`，在必要时改写报文并用 `retain=True` 重发，
+**无需刷新固件**。实现见 `discovery_override.py`。
+
+| 话题 | 补丁 | 原因 |
+|---|---|---|
+| `switch/<dev_id>` | 补 `command_topic`；无 `value_template` 时去掉 `state_topic` | 固件 ≤ 1.3.101 没写 `command_topic`，HA 会整条拒绝；而 `state_topic` 指向的 `device/state` 是嵌套 JSON，开关状态永远解不出 `ON`/`OFF`。去掉后变成乐观实体，符合硬件（`ON` 唤醒 / `OFF` 休眠，本就无可读开关状态） |
+| `select/<dev_id>/ems_mode` | 补 `state_topic`（集成自维护话题） | 固件没给状态话题，HA 重启后实体变成 `unknown` |
+| `sensor/<dev_id>/soc`、`bat_p` | 补 `state_class: measurement` | 否则不产生长期统计（LTS） |
+| `number/<dev_id>/phase_output_power` | 补 `command_template` | 固件要求 `{"phase_a":..,"phase_b":..,"phase_c":..}`，而 `number` 实体默认只能发一个数字，实体完全不能用 |
+| 以上全部 | 补 `availability_topic` | 设备停止推送后实体转为 `unavailable`，不再展示陈旧值 |
+
+> 补丁是**幂等且带判定条件**的：报文已合规时**不会**重发，因此固件修好后这层
+> 自动变成空操作（届时可以删除）。
+>
+> ⚠️ 副作用：固件每次重连会重发一次自己的（旧）报文，HA 可能在补丁到达前先对旧
+> 报文报一次错；日志里看到 `Invalid config for [switch.mqtt]` 但实体正常，属于正常现象。
+> 反之，即使卸载集成，只要固件重连一次就会用自己的报文覆盖回去，**自带自愈**。
+> 另外，`availability_topic` 与 `ems_mode` 状态话题都位于 `hoymiles/<dev_id>/…` 命名
+> 空间下，与固件话题不冲突。
+
+#### 开关实体的固件支持情况
+
+补 `command_topic` 只是让 HA **不再拒绝**这条报文，能否真正开关机取决于固件：
+
+| 固件 | `…/switch/…/config` | 订阅 `…/switch/…/set` | 表现 |
+|---|---|---|---|
+| ≤ 1.3.101 | 缺 `command_topic` | ✗ 未订阅 | 补丁后实体出现，但下发无效（设备不响应） |
+| 下一个发版及以后 | 完整 | ✓ 已订阅 | 开关机生效（`ON` 唤醒 / `OFF` 休眠） |
+
 ---
 
 ## 安装
@@ -111,9 +145,15 @@ language: zh
 卡片只有在 EMS 模式为 `tou_plan` 时才渲染编辑界面（`require_tou_mode: false` 可关闭该门控）。
 卡片会依次下发 `day1..day8` 日计划 → 周计划 → 切到 `tou_plan` → 回读当天计划。
 
-> 设备的 `ems_mode` 是**乐观实体**（Discovery 未提供 `state_topic`），
-> 因此卡片读到的模式是"最后一次设置值"。集成另提供 `EMS Mode (Device)` 传感器，
-> 来自 `system/state` 的 `ems_mode` 字段，可反映设备实际运行模式。
+> 设备的 `ems_mode` 是早期固件未提供 `state_topic`，集成会给它补一个**自维护的
+> retained 状态话题** `hoymiles/<dev_id>/ems_mode/state`：
+>
+> - 任何人向 `…/ems_mode/command` 下发后，集成立即回显到该话题 → 界面/卡片即时刷新；
+> - 同时跟随 `system/state` 里的 `ems_mode`（设备真实运行模式，5 分钟周期）
+>   进行纠正，所以设备侧超时自动回退到 `general` 也能反映出来。
+>
+> 为什么不直接把 `state_topic` 指向 `system/state`：该话题只有 5 分钟周期，而本卡片
+> 是用 select 状态做门控的，那样会让“切到 tou_plan”后最多卡 5 分钟。
 
 ---
 
@@ -212,6 +252,7 @@ HA 自带能源仪表盘有 Sankey 风格的「能量分布」卡片，但节点
 | `hoymiles.set_tou_week_plan` | 下发星期与日计划映射 |
 | `hoymiles.get_tou_plan` | 查询某一天计划 |
 | `hoymiles.set_ems_mode` | 切换 EMS 模式 |
+| `hoymiles.set_phase_output_power` | 一次性设置 A/B/C 三相输出功率限值 |
 | `hoymiles.reboot` | 重启设备 |
 
 目标设备二选一：
@@ -253,9 +294,26 @@ data:
 | `sensor` | `system/state`（5min，仅主机/单机） | `System PV Energy Today`、`Battery Charge Energy Today`、`EMS Mode (Device)` |
 | `sensor` | TOU topic | `TOU Plan Status`、`TOU Day Plan Ack`、`TOU Week Plan Ack` |
 | `binary_sensor` | `quick/state`、`device/state` | `Heating`、`System Heating`、`Pack N Heating` |
+| `number` | 集成本地（`phase_output_power/set`） | `Phase A/B/C Output Power` |
 
 > `system/state` 与 `quick/state` 的 `sys_*` 字段仅主机/单机发布；从机上这些实体为 `unknown`。
 > `pv_num` / `pvs` 字段在 PID=0x2806 的机型上不发布，`PV1..PV4 Power` 为 `unknown`。
+
+### 设备离线时的可用性
+
+所有实体都带可用性判定：`quick/state` 超过 2 分钟（或 `device/state`、
+`system/state` 超过 11 分钟）没收到推送，集成就会把 `hoymiles/<dev_id>/availability`
+置为 `offline`，**固件 discovery 的实体与集成自己的实体会一起转为 `unavailable`**，
+避免继续展示陈旧值。恢复推送后自动变回 `online`。
+
+### 多相输出功率
+
+三相限值设备**不会回读**，因此 `Phase A/B/C Output Power` 展示的是"最后一次下发值"
+（跨 HA 重启会通过实体状态恢复）。任一相从未设置过时会回退到协议下限 100 W，
+并打一条 warning；想避免这种情况请用 `hoymiles.set_phase_output_power` 一次设齐三相。
+
+固件自带的 `phase_output_power` 实体被补上 `command_template` 后也能用，语义是
+**一个值同时应用到三相**（固件只接受完整的三相 JSON）。
 
 ---
 
@@ -267,6 +325,9 @@ data:
 | 实体一直 `unknown` | 确认 `dev_id` 大小写与 topic 完全一致；`system/state` 仅在主机/单机发布 |
 | 卡片找不到 | 集成启动后会自动注入前端模块；若浏览器缓存旧版请强制刷新 |
 | 下发 TOU 报 `10` | 表示设备当前不是 `tou_plan` 模式，先调用 `hoymiles.set_ems_mode` |
+| 日志报 `Invalid config for [switch.mqtt]` | 固件重连时先发了自己的旧报文，集成会在毫秒内补上；实体正常则无需理会 |
+| 开关状态显示 `unknown` | 已按设计改为乐观实体，只能反映本集成下发的状态（设备无开关状态回读） |
+| 实体全部 `unavailable` | 检查设备是否在推送；`quick/state` 停超 2 分钟即判定离线 |
 | 云平台下载的集成不生效 | 树莓派旧版 HA 注意最低版本要求，或改用"手动拷贝 + 重启"方式 |
 
 ---
@@ -282,9 +343,11 @@ hoymiles-ha/
     ├── manifest.json
     ├── const.py             topic 模板、常量、应答状态码
     ├── mqtt_util.py         MQTT 收发与设备自动发现
-    ├── coordinator.py       MQTT 推送型 DataUpdateCoordinator
+    ├── coordinator.py       MQTT 推送型 DataUpdateCoordinator + 可用性判定
+    ├── discovery_override.py 固件 discovery 报文补丁
     ├── sensor.py            状态传感器 + TOU 回显/应答传感器
     ├── binary_sensor.py     加热状态
+    ├── number.py            三相输出功率
     ├── config_flow.py       设备发现与接入
     ├── options_flow.py      TOU 配置向导
     ├── services.py          hoymiles.* 服务

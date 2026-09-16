@@ -128,6 +128,16 @@
       "fields": {
         "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" }
       }
+    },
+    "set_phase_output_power": {
+      "name": "设置三相输出功率",
+      "description": "一次性设置 A/B/C 三相的输出功率限值。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" },
+        "phase_a": { "name": "A 相限值", "description": "A 相输出功率限值 (W, 100..2500)" },
+        "phase_b": { "name": "B 相限值", "description": "B 相输出功率限值 (W, 100..2500)" },
+        "phase_c": { "name": "C 相限值", "description": "C 相输出功率限值 (W, 100..2500)" }
+      }
     }
   }
 }
