@@ -46,7 +46,16 @@ T_DISCOVERY: Final = "homeassistant/switch/+/config"
 DISCOVERY_PREFIX: Final = "homeassistant"
 
 # Catches every discovery config the firmware publishes for one device.
-T_FIRMWARE_DISCOVERY: Final = "homeassistant/+/{dev_id}/config"
+#
+# Two patterns are required because the discovery topic depth depends on the
+# platform: the "node" level is only present when the payload addresses one
+# specific object.
+#   homeassistant/<component>/<dev_id>/config           e.g. switch
+#   homeassistant/<component>/<dev_id>/<object>/config  e.g. sensor, number
+FIRMWARE_DISCOVERY_TOPICS: Final = (
+    "homeassistant/+/{dev_id}/config",
+    "homeassistant/+/{dev_id}/+/config",
+)
 
 # Availability topic owned by the integration.  It is only referenced by the
 # patched discovery payloads, so it never collides with firmware topics.

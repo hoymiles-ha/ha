@@ -64,11 +64,11 @@ from homeassistant.core import HomeAssistant, callback
 from . import mqtt_util
 from .const import (
     DISCOVERY_PREFIX,
+    FIRMWARE_DISCOVERY_TOPICS,
     PAYLOAD_AVAILABLE,
     PAYLOAD_NOT_AVAILABLE,
     T_AVAILABILITY,
     T_EMS_MODE_STATE,
-    T_FIRMWARE_DISCOVERY,
     T_SWITCH_SET,
 )
 
@@ -145,8 +145,6 @@ def _patch_availability(dev_id: str, payload: dict[str, Any]) -> bool:
     payload["payload_available"] = PAYLOAD_AVAILABLE
     payload["payload_not_available"] = PAYLOAD_NOT_AVAILABLE
     return True
-
-
 def _managed_patches(dev_id: str) -> dict[str, PatchFn]:
     """Discovery object paths (``<component>/<node>/<object>``) we manage."""
     return {
@@ -171,35 +169,49 @@ def _object_path(topic: str) -> str | None:
 
 
 class FirmwareDiscoveryPatcher:
-    """Keep the device's retained discovery payloads HA compliant."""
+    """Keep the device's retained discovery payloads HA compliant.
+
+    Termination relies on every patch being **idempotent**: republishing a
+    corrected payload makes the device echo it back to us, the patch functions
+    then find nothing left to do and stay silent.
+
+    Deliberately *no* "already published" cache: the firmware republishes its
+    own retained config on every MQTT reconnect, which overwrites the corrected
+    payload on the broker. Such a cache would then suppress the repair and leave
+    the broker parked on the unpatched version.
+    """
 
     def __init__(self, hass: HomeAssistant, dev_id: str) -> None:
         self.hass = hass
         self.dev_id = dev_id
         self._patches = _managed_patches(dev_id)
-        self._unsub: Callable[[], None] | None = None
-        # Last payload we published per discovery topic, used to stop ourselves
-        # from republishing the same correction in a loop.
-        self._published: dict[str, str] = {}
+        self._unsubs: list[Callable[[], None]] = []
 
     async def async_setup(self) -> None:
-        """Subscribe to the discovery topics of this device."""
+        """Subscribe to the discovery topics of this device.
+
+        Both the 4 level (``switch``) and the 5 level (``sensor``, ``number``,
+        ``select``, ...) discovery topics are watched - missing one of them
+        silently leaves that platform unpatched.
+        """
         if mqtt_util.mqtt is None:  # pragma: no cover - mqtt is a dependency
             _LOGGER.warning("MQTT integration unavailable, discovery patching disabled")
             return
 
-        topic = T_FIRMWARE_DISCOVERY.format(dev_id=self.dev_id)
-        self._unsub = await mqtt_util.mqtt.async_subscribe(
-            self.hass, topic, self._on_discovery_message, 1
-        )
-        _LOGGER.debug("Watching firmware discovery topics on %s", topic)
+        for pattern in FIRMWARE_DISCOVERY_TOPICS:
+            topic = pattern.format(dev_id=self.dev_id)
+            unsub = await mqtt_util.mqtt.async_subscribe(
+                self.hass, topic, self._on_discovery_message, 1
+            )
+            self._unsubs.append(unsub)
+            _LOGGER.debug("Watching firmware discovery topics on %s", topic)
 
     @callback
     def async_shutdown(self) -> None:
         """Stop watching discovery topics."""
-        if self._unsub is not None:
-            self._unsub()
-            self._unsub = None
+        for unsub in self._unsubs:
+            unsub()
+        self._unsubs.clear()
 
     @callback
     def _on_discovery_message(self, msg: Any) -> None:
@@ -227,22 +239,17 @@ class FirmwareDiscoveryPatcher:
         changed = patch(self.dev_id, payload)
         changed = _patch_availability(self.dev_id, payload) or changed
         if not changed:
+            # Already compliant, or this is the echo of our own correction.
             return
 
         rendered = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-        if self._published.get(path) == rendered:
-            return
+        self.hass.async_create_task(self._async_republish(msg.topic, rendered))
 
-        # Remember before publishing so the echo of our own message is ignored.
-        self._published[path] = rendered
-        self.hass.async_create_task(self._async_republish(msg.topic, rendered, path))
-
-    async def _async_republish(self, topic: str, payload: str, path: str) -> None:
+    async def _async_republish(self, topic: str, payload: str) -> None:
         """Publish the corrected payload, retained so it survives HA restarts."""
         try:
             await mqtt_util.async_publish(self.hass, topic, payload, qos=1, retain=True)
         except Exception:  # noqa: BLE001 - never break the entry on a publish error
-            self._published.pop(path, None)
             _LOGGER.warning("Unable to patch discovery payload on %s", topic, exc_info=True)
             return
 
