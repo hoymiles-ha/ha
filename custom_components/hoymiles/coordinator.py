@@ -58,25 +58,6 @@ SUBSCRIPTIONS: tuple[tuple[str, str, int], ...] = (
 )
 
 
-def _payload_to_text(payload: Any) -> str | None:
-    """Normalise an MQTT payload into a stripped ``str``.
-
-    Home Assistant hands over a ``str`` for every payload that decodes as UTF-8
-    and ``bytes`` only for the rest, so both must be accepted - calling
-    ``.decode()`` unconditionally raises ``AttributeError`` on the common path.
-    """
-    if isinstance(payload, bytes):
-        try:
-            payload = payload.decode()
-        except UnicodeDecodeError:
-            return None
-
-    if not isinstance(payload, str):
-        return None
-
-    return payload.strip().strip('"')
-
-
 class HoymilesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Push-driven coordinator backed by MQTT subscriptions."""
 
@@ -264,10 +245,11 @@ class HoymilesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @callback
     def _handle_ems_mode_command(self, msg: Any) -> None:
         """Echo a commanded EMS mode onto the select's state topic."""
-        mode = _payload_to_text(msg.payload)
+        mode = mqtt_util.payload_to_text(msg.payload)
         if mode is None:
             return
 
+        mode = mode.strip('"')
         if mode not in EMS_MODES:
             return
 

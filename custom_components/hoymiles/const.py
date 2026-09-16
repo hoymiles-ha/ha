@@ -57,6 +57,27 @@ FIRMWARE_DISCOVERY_TOPICS: Final = (
     "homeassistant/+/{dev_id}/+/config",
 )
 
+# Discovery objects an older firmware used to publish and the current one does
+# not.  Their retained configs linger on the broker and Home Assistant rejects
+# them on every start (``"mode": "textarea"`` is not a valid TextMode), so they
+# are deleted on sight.
+#
+# Nothing is lost: the TOU plan is exposed through
+# ``sensor/<dev_id>/tou_day_plan/set`` and ``sensor/<dev_id>/tou_week_plan/set``
+# instead, and Home Assistant never managed to create entities for these
+# payloads in the first place.
+LEGACY_DISCOVERY_OBJECTS: Final = (
+    "text/{dev_id}/tou_day1",
+    "text/{dev_id}/tou_day2",
+    "text/{dev_id}/tou_day3",
+    "text/{dev_id}/tou_day4",
+    "text/{dev_id}/tou_day5",
+    "text/{dev_id}/tou_day6",
+    "text/{dev_id}/tou_day7",
+    "text/{dev_id}/tou_day8",
+    "text/{dev_id}/tou_week_plan",
+)
+
 # Availability topic owned by the integration.  It is only referenced by the
 # patched discovery payloads, so it never collides with firmware topics.
 T_AVAILABILITY: Final = "hoymiles/{dev_id}/availability"

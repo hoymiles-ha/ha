@@ -31,6 +31,29 @@ def dumps(payload: Any) -> str:
     return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
 
 
+def payload_to_text(payload: Any) -> str | None:
+    """Normalise a received MQTT payload into a stripped ``str``.
+
+    Home Assistant hands over a ``str`` for every payload that decodes as UTF-8
+    and ``bytes`` only for the rest, so both must be accepted - calling
+    ``.decode()`` unconditionally raises ``AttributeError`` on the common path.
+
+    Returns ``None`` for undecodable or empty payloads; an empty payload is the
+    MQTT way of deleting a retained message, not a value to act upon.
+    """
+    if isinstance(payload, bytes):
+        try:
+            payload = payload.decode()
+        except UnicodeDecodeError:
+            return None
+
+    if not isinstance(payload, str):
+        return None
+
+    text = payload.strip()
+    return text or None
+
+
 async def async_publish(
     hass: HomeAssistant,
     topic_str: str,
@@ -117,5 +140,6 @@ __all__ = [
     "async_publish",
     "async_wait_for_message",
     "dumps",
+    "payload_to_text",
     "topic",
 ]

@@ -46,6 +46,16 @@ Patches
 ``button/<dev_id>/reboot``
     * functionally untouched, only made availability aware.
 
+Stale configs
+    * every discovery object listed in
+      :data:`const.LEGACY_DISCOVERY_OBJECTS` is **deleted** (empty retained
+      payload) instead of patched.  An older firmware shipped a ``text`` entity
+      per TOU day (``tou_day1`` .. ``tou_day8``) plus ``tou_week_plan``, using
+      ``"mode": "textarea"`` - not a valid Home Assistant ``TextMode``, so the
+      config was rejected on every single start.  The current firmware exposes
+      the TOU plan through ``sensor/<dev_id>/tou_day_plan/set`` instead, so
+      nothing is lost by removing them.
+
 All patched payloads
     * get ``availability_topic`` + ``payload_available`` /
       ``payload_not_available``.  ``coordinator.py`` keeps that topic in sync
@@ -65,6 +75,7 @@ from . import mqtt_util
 from .const import (
     DISCOVERY_PREFIX,
     FIRMWARE_DISCOVERY_TOPICS,
+    LEGACY_DISCOVERY_OBJECTS,
     PAYLOAD_AVAILABLE,
     PAYLOAD_NOT_AVAILABLE,
     T_AVAILABILITY,
@@ -159,6 +170,11 @@ def _managed_patches(dev_id: str) -> dict[str, PatchFn]:
     }
 
 
+def _removed_objects(dev_id: str) -> frozenset[str]:
+    """Discovery object paths that are stale and must be deleted."""
+    return frozenset(obj.format(dev_id=dev_id) for obj in LEGACY_DISCOVERY_OBJECTS)
+
+
 def _object_path(topic: str) -> str | None:
     """Return ``<component>/<node>/<object>`` for a discovery topic."""
     prefix = f"{DISCOVERY_PREFIX}/"
@@ -185,6 +201,7 @@ class FirmwareDiscoveryPatcher:
         self.hass = hass
         self.dev_id = dev_id
         self._patches = _managed_patches(dev_id)
+        self._removed = _removed_objects(dev_id)
         self._unsubs: list[Callable[[], None]] = []
 
     async def async_setup(self) -> None:
@@ -215,9 +232,20 @@ class FirmwareDiscoveryPatcher:
 
     @callback
     def _on_discovery_message(self, msg: Any) -> None:
-        """Rewrite a firmware discovery payload when it is not compliant."""
+        """Rewrite or delete a firmware discovery payload when it is not right."""
         path = _object_path(msg.topic)
         if path is None:
+            return
+
+        # An empty payload is how a retained config gets deleted - either by us
+        # a moment ago or by somebody else.  Nothing left to do, and skipping
+        # early also keeps the echo of our own deletion out of the JSON parser.
+        text = mqtt_util.payload_to_text(msg.payload)
+        if text is None:
+            return
+
+        if path in self._removed:
+            self.hass.async_create_task(self._async_remove(msg.topic))
             return
 
         patch = self._patches.get(path)
@@ -225,11 +253,9 @@ class FirmwareDiscoveryPatcher:
             return
 
         try:
-            payload = json.loads(msg.payload)
+            payload = json.loads(text)
         except (ValueError, TypeError):
-            _LOGGER.warning(
-                "Ignoring non JSON discovery payload on %s: %s", msg.topic, msg.payload
-            )
+            _LOGGER.warning("Ignoring non JSON discovery payload on %s: %s", msg.topic, text)
             return
 
         if not isinstance(payload, dict):
@@ -254,6 +280,21 @@ class FirmwareDiscoveryPatcher:
             return
 
         _LOGGER.info("Patched MQTT discovery payload on %s", topic)
+
+    async def _async_remove(self, topic: str) -> None:
+        """Delete a stale retained discovery config.
+
+        An empty retained payload is the documented way to remove a discovery
+        message from the broker; the topic then simply does not exist any more
+        and drops out of the device's discovery topic set.
+        """
+        try:
+            await mqtt_util.async_publish(self.hass, topic, "", qos=1, retain=True)
+        except Exception:  # noqa: BLE001 - never break the entry on a publish error
+            _LOGGER.warning("Unable to remove stale discovery config on %s", topic, exc_info=True)
+            return
+
+        _LOGGER.info("Removed stale MQTT discovery config on %s", topic)
 
 
 __all__ = [

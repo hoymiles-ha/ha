@@ -52,15 +52,22 @@
 | `sensor/<dev_id>/soc`、`bat_p` | 补 `state_class: measurement` | 否则不产生长期统计（LTS） |
 | `number/<dev_id>/phase_output_power` | 补 `command_template` | 固件要求 `{"phase_a":..,"phase_b":..,"phase_c":..}`，而 `number` 实体默认只能发一个数字，实体完全不能用 |
 | 以上全部 | 补 `availability_topic` | 设备停止推送后实体转为 `unavailable`，不再展示陈旧值 |
+| `text/<dev_id>/tou_day1..8`、`tou_week_plan` | **删除**（空 retained payload） | 旧固件遗留的 TOU 文本实体配置，`"mode": "textarea"` 不是合法值，**每次 HA 启动都报错**。当前固件改用 `sensor/<dev_id>/tou_day_plan/set`，且 HA 从未成功建过这些实体 ⇒ 清理零损失 |
 
 > 补丁是**幂等且带判定条件**的：报文已合规时**不会**重发，因此固件修好后这层
 > 自动变成空操作（届时可以删除）。
+>
+> 被删除的过期配置同理：删掉后 retained 就不再存在，**不会反复发布**；若某个跑旧固件的设备又把它发回来，会被再次删除（自愈）。
 >
 > ⚠️ 副作用：固件每次重连会重发一次自己的（旧）报文，HA 可能在补丁到达前先对旧
 > 报文报一次错；日志里看到 `Invalid config for [switch.mqtt]` 但实体正常，属于正常现象。
 > 反之，即使卸载集成，只要固件重连一次就会用自己的报文覆盖回去，**自带自愈**。
 > 另外，`availability_topic` 与 `ems_mode` 状态话题都位于 `hoymiles/<dev_id>/…` 命名
 > 空间下，与固件话题不冲突。
+>
+> ⚠️ HA 不会为**已存在**的实体重建订阅：给实体新增 `state_topic` 这类订阅键需要**完整重启**
+> HA 才生效（`mqtt.reload` 也不一定行）。若设备恰好在 HA 启动瞬间重连、HA 先读到未修正的
+> 报文，个别实体会到下次重启前不跟随状态话题。
 
 #### 开关实体的固件支持情况
 
@@ -326,8 +333,10 @@ data:
 | 卡片找不到 | 集成启动后会自动注入前端模块；若浏览器缓存旧版请强制刷新 |
 | 下发 TOU 报 `10` | 表示设备当前不是 `tou_plan` 模式，先调用 `hoymiles.set_ems_mode` |
 | 日志报 `Invalid config for [switch.mqtt]` | 固件重连时先发了自己的旧报文，集成会在毫秒内补上；实体正常则无需理会 |
+| 日志报 `mode: textarea` 或 `does not generate unique IDs` | 前者是本集成会自动清理的旧固件遗留（升级后应消失）；后者是旧固件把多个 config 的 `unique_id` 写成同一个值，**只影响未被本集成管理的设备**，需升级固件消除 |
 | 开关状态显示 `unknown` | 已按设计改为乐观实体，只能反映本集成下发的状态（设备无开关状态回读） |
 | 实体全部 `unavailable` | 检查设备是否在推送；`quick/state` 停超 2 分钟即判定离线 |
+| 新增 `state_topic` 后实体不跟随 | HA 不会为已存在实体重建订阅，需**完整重启** HA Core |
 | 云平台下载的集成不生效 | 树莓派旧版 HA 注意最低版本要求，或改用"手动拷贝 + 重启"方式 |
 
 ---
