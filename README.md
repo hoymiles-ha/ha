@@ -184,6 +184,7 @@ dev_id: MSA-280520260806
 title: 我的家            # 可选，默认「我的家」
 language: zh             # 可选 en|zh
 temperature_entity: sensor.outdoor_temperature   # 可选，标题右侧显示温度
+show_rssi: true          # 可选，右上角信号扇形（默认 true）
 gradient: true           # 可选，浅色渐变底（默认 true）
 max_width: 620           # 可选，插图最大宽度
 ```
@@ -197,10 +198,22 @@ max_width: 620           # 可选，插图最大宽度
 | 电网 | `system_grid_power`（正=受电） |
 | 负载 | `system_load_power` |
 | 状态气泡 | `battery_status`（`standby`/`charge`/`discharge`/`lock`） |
+| 信号扇形 | `rssi`（dBm） |
 
 - 连线只有该支路功率 ≥ 5 W 时才显示流动小球，球的颜色随支路变化，速度随功率加快。
 - 「微储」气泡显示电池真实状态；「电网」气泡显示 `电网输入` / `电网输出`。
-- 单独覆盖某个实体用 `entities:` 段，例如 `entities: { pv: sensor.my_pv }`。
+- **卡片右上角是 RSSI 信号扇形**：四段同心弧，点亮的弧数（1~4）和颜色共同
+  表示信号质量，旁边直接跟 `-21 dBm` 读数，悬停可看「优秀 / 良好 / 一般 / 较弱」：
+
+  | RSSI | 弧数 | 颜色 |
+  |---|---|---|
+  | ≥ -55 dBm | 4 | 绿（优秀） |
+  | ≥ -65 dBm | 3 | 绿（良好） |
+  | ≥ -75 dBm | 2 | 黄（一般） |
+  | < -75 dBm | 1 | 红（较弱） |
+
+  设备不上报 `rssi` 时自动隐藏，不需要可以把 `show_rssi` 设为 `false`。
+- 单独覆盖某个实体用 `entities:` 段，例如 `entities: { pv: sensor.my_pv, rssi: sensor.my_rssi }`。
 
 ## 电池卡片
 

@@ -17,6 +17,7 @@
  *   system_grid_power                      grid, positive=importing  [W]
  *   system_load_power                      house consumption         [W]
  *   battery_status                         standby|charge|discharge|lock
+ *   rssi                                   Wi-Fi RSSI, dBm -> signal fan
  *
  * Card config:
  *   type: custom:hoymiles-power-flow
@@ -33,6 +34,8 @@
  *     load: sensor.my_load_power
  *     soc: sensor.my_soc
  *     battery_status: sensor.my_battery_status
+ *     rssi: sensor.my_rssi
+ *   show_rssi: true               # optional, hide the fan with false
  * ========================================================================== */
 
 function _hmPowerFlowRegister() {
@@ -196,6 +199,31 @@ function _hmPowerFlowRegister() {
     return Math.min(Math.max(value, min), max);
   }
 
+  /**
+   * Annular sector ("fan segment") path.
+   *
+   * Angles are in degrees with -90 pointing up and 0 to the right, drawn in
+   * SVG screen coordinates (y grows downwards), so an increasing angle sweeps
+   * clockwise.
+   */
+  function annular(cx, cy, ri, ro, from, to) {
+    const at = (radius, angle) => {
+      const rad = (angle * Math.PI) / 180;
+      return [
+        (cx + radius * Math.cos(rad)).toFixed(2),
+        (cy + radius * Math.sin(rad)).toFixed(2),
+      ];
+    };
+    const [x0i, y0i] = at(ri, from);
+    const [x1i, y1i] = at(ri, to);
+    const [x0o, y0o] = at(ro, from);
+    const [x1o, y1o] = at(ro, to);
+    const large = Math.abs(to - from) > 180 ? 1 : 0;
+    return `M${x0i} ${y0i}L${x0o} ${y0o}`
+      + `A${ro} ${ro} 0 ${large} 1 ${x1o} ${y1o}`
+      + `L${x1i} ${y1i}A${ri} ${ri} 0 ${large} 0 ${x0i} ${y0i}Z`;
+  }
+
   /* ------------------------------------------------------------------ *
    * Card
    * ------------------------------------------------------------------ */
@@ -232,6 +260,11 @@ function _hmPowerFlowRegister() {
                  color: var(--primary-text-color); letter-spacing: 0.2px; }
         .hname .dev { font-size: 13px; font-weight: 400; opacity: 0.65;
                       margin-left: 6px; }
+        .hright { display: flex; align-items: center; gap: 14px; flex: none; }
+        .signal { display: inline-flex; align-items: center; gap: 6px;
+                  font-size: 13.5px; color: var(--secondary-text-color);
+                  font-variant-numeric: tabular-nums; }
+        .signal .fan { display: block; width: 26px; height: 26px; flex: none; }
         .chip { display: inline-flex; align-items: center; gap: 6px;
                 font-size: 14px; color: var(--primary-text-color); }
         .wrap { display: flex; justify-content: center; }
@@ -296,8 +329,8 @@ function _hmPowerFlowRegister() {
       const d = this._data();
       return [
         this._config.language, this._config.gradient, this._config.max_width,
-        this._config.title, this._temperature(),
-        d.pv, d.battery, d.grid, d.load, d.soc, d.status,
+        this._config.title, this._config.show_rssi, this._temperature(),
+        d.pv, d.battery, d.grid, d.load, d.soc, d.status, d.rssi,
       ].join("\u0001");
     }
 
@@ -421,7 +454,11 @@ function _hmPowerFlowRegister() {
       let status = this._readText("battery_status");
       if (!status) status = this._readText("bat_sts");
 
-      return { pv, battery, grid, load, soc, status: status.toLowerCase() };
+      // Wi-Fi signal strength; the power flow card prints it as a fan in the
+      // top right corner of the header.
+      const rssi = this._read("rssi", null);
+
+      return { pv, battery, grid, load, soc, status: status.toLowerCase(), rssi };
     }
 
     /* ----------------------------- render ----------------------------- */
@@ -438,10 +475,13 @@ function _hmPowerFlowRegister() {
               ${this._t("My home", "我的家")}
               <span class="dev">${esc(this._dev())}</span>
             </div>
-            ${temp === null ? "" : html`
-              <div class="chip">
-                <span>☀️</span><span>${temp}</span>
-              </div>`}
+            <div class="hright">
+              ${this._signal(d)}
+              ${temp === null ? "" : html`
+                <div class="chip">
+                  <span>☀️</span><span>${temp}</span>
+                </div>`}
+            </div>
           </div>
           <div class="wrap" style=${this._wrapStyle()}>
             ${this._untrusted(this._svg(d))}
@@ -464,6 +504,60 @@ function _hmPowerFlowRegister() {
       }
       const unit = (state.attributes && state.attributes.unit_of_measurement) || "°C";
       return `${num(state.state).toFixed(0)}${unit}`;
+    }
+
+    /**
+     * RSSI shown in the top right corner: a fan of concentric segments plus
+     * the raw dBm reading.  Hidden when the device reports no signal value,
+     * and switchable off with ``show_rssi: false``.
+     */
+    _signal(d) {
+      if (this._config.show_rssi === false) return null;
+      const rssi = d.rssi;
+      if (rssi === null || !Number.isFinite(rssi)) return null;
+
+      let bars = 1;
+      let color = "var(--hm-pf-weak, #ef4444)";
+      let quality = this._t("weak", "较弱");
+      if (rssi >= -55) {
+        bars = 4;
+        color = "var(--hm-pf-strong, #22c55e)";
+        quality = this._t("excellent", "优秀");
+      } else if (rssi >= -65) {
+        bars = 3;
+        color = "var(--hm-pf-strong, #22c55e)";
+        quality = this._t("good", "良好");
+      } else if (rssi >= -75) {
+        bars = 2;
+        color = "var(--hm-pf-fair, #f59e0b)";
+        quality = this._t("fair", "一般");
+      }
+
+      return html`
+        <div class="signal" title=${`${this._t("Wi-Fi signal", "Wi-Fi 信号")}: ${quality}`}>
+          ${this._untrusted(this._signalFan(bars, color))}
+          <span>${rssi.toFixed(0)} dBm</span>
+        </div>`;
+    }
+
+    /**
+     * The fan itself: four annular sectors radiating from the bottom left
+     * corner. The innermost `bars` segments are lit, so a weak signal shows a
+     * small arc and a strong one fills the quarter circle.
+     */
+    _signalFan(bars, color) {
+      const originY = 30;
+      const start = -88;
+      const span = 86;
+      let out = "<svg class=\"fan\" viewBox=\"0 0 32 32\" "
+        + "xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\">";
+      for (let i = 0; i < 4; i += 1) {
+        const ri = 4 + i * 7;
+        const fill = i < bars ? color : "var(--divider-color, #dcdfe4)";
+        out += `<path d="${annular(0, originY, ri, ri + 5, start, start + span)}"`
+          + ` fill="${fill}"/>`;
+      }
+      return `${out}</svg>`;
     }
 
     /* --------------------------- the diagram --------------------------- */
