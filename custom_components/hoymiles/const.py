@@ -195,7 +195,22 @@ FRONTEND_URL: Final = "/hoymiles_static"
 # Add new cards here; ``__init__._async_register_frontend`` walks this tuple.
 CARD_FILENAME: Final = "hoymiles-tou-editor.js"
 SANKEY_CARD_FILENAME: Final = "hoymiles-energy-sankey.js"
-FRONTEND_ASSETS: Final = (CARD_FILENAME, SANKEY_CARD_FILENAME)
+POWER_FLOW_CARD_FILENAME: Final = "hoymiles-power-flow.js"
+BATTERY_CARD_FILENAME: Final = "hoymiles-battery.js"
+HISTORY_CHART_CARD_FILENAME: Final = "hoymiles-history-chart.js"
+GAUGE_CARD_FILENAME: Final = "hoymiles-gauge.js"
+CONTROL_CARD_FILENAME: Final = "hoymiles-control.js"
+PACK_LIST_CARD_FILENAME: Final = "hoymiles-pack-list.js"
+FRONTEND_ASSETS: Final = (
+    CARD_FILENAME,
+    SANKEY_CARD_FILENAME,
+    POWER_FLOW_CARD_FILENAME,
+    BATTERY_CARD_FILENAME,
+    HISTORY_CHART_CARD_FILENAME,
+    GAUGE_CARD_FILENAME,
+    CONTROL_CARD_FILENAME,
+    PACK_LIST_CARD_FILENAME,
+)
 
 CARD_URL: Final = f"{FRONTEND_URL}/{CARD_FILENAME}"
 

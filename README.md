@@ -9,9 +9,18 @@
 - 订阅设备状态 topic 并生成实体（quick / device / system）
 - 订阅 TOU 应答与回显 topic（`tou_day_plan/ack`、`tou_week_plan/ack`、`tou_plan/status`）
 - 提供 TOU 日计划 / 周计划 / 获取计划 / EMS 模式 / 重启的**服务**
-- 提供原生 options 向导，以及**两张捆绑的 Lovelace 卡片**（自动注册前端资源）：
+- 提供原生 options 向导，以及**八张捆绑的 Lovelace 卡片**（自动注册前端资源）：
+  - `custom:hoymiles-power-flow` —— 家居功率流总览（光伏 / 微储 / 电网 / 负载）
+  - `custom:hoymiles-battery` —— 电池堆总览（按实际电池包数量自适应，逐包 SOC/温度）
+  - `custom:hoymiles-pack-list` —— 电池包列表（SOC 进度条 / 温度 / 加热状态）
+  - `custom:hoymiles-history-chart` —— 历史曲线（日 / 月 / 年 + 日期导航，读长期统计）
+  - `custom:hoymiles-gauge` —— 单个数值的仪表盘（带量程换挡，如 Wh → kWh）
+  - `custom:hoymiles-control` —— 控制面板（开关机 / EMS / 功率 / 多相 / 重启）
   - `custom:hoymiles-tou-editor` —— 分时计划可视化编辑器
   - `custom:hoymiles-energy-sankey` —— 能量流桑基图（读取 HA 长期统计）
+
+> 八张卡片都以 `ha-card` 为根、自绘 SVG，**不依赖任何 CDN 或第三方卡片**，
+> 离线环境同样可用；`language` 统一支持 `zh` / `en`。
 
 > 注：集成**复用** Home Assistant 的 MQTT 集成（`dependencies: ["mqtt"]`），
 > 不需要重复填写 Broker 账号密码。
@@ -161,6 +170,154 @@ language: zh
 >
 > 为什么不直接把 `state_topic` 指向 `system/state`：该话题只有 5 分钟周期，而本卡片
 > 是用 select 状态做门控的，那样会让“切到 tou_plan”后最多卡 5 分钟。
+
+---
+
+## 功率流总览卡片
+
+把「家」画出来，并把实时的光伏 / 微储 / 电网 / 负载功率叠加在插图上，和手机 App
+首页一致。
+
+```yaml
+type: custom:hoymiles-power-flow
+dev_id: MSA-280520260806
+title: 我的家            # 可选，默认「我的家」
+language: zh             # 可选 en|zh
+temperature_entity: sensor.outdoor_temperature   # 可选，标题右侧显示温度
+gradient: true           # 可选，浅色渐变底（默认 true）
+max_width: 620           # 可选，插图最大宽度
+```
+
+数据全部来自 MQTT 实体（**不依赖 recorder**）：
+
+| 节点 | 实体后缀（`sensor.<dev>_…`） |
+|---|---|
+| 光伏 | `system_pv_power`（缺失时回退 `pv_power`） |
+| 微储 | `system_battery_power`（负=充电）+ `system_soc` |
+| 电网 | `system_grid_power`（正=受电） |
+| 负载 | `system_load_power` |
+| 状态气泡 | `battery_status`（`standby`/`charge`/`discharge`/`lock`） |
+
+- 连线只有该支路功率 ≥ 5 W 时才显示流动小球，球的颜色随支路变化，速度随功率加快。
+- 「微储」气泡显示电池真实状态；「电网」气泡显示 `电网输入` / `电网输出`。
+- 单独覆盖某个实体用 `entities:` 段，例如 `entities: { pv: sensor.my_pv }`。
+
+## 电池卡片
+
+按**实际电池包数量**自适应绘制电池堆：1～4 个电池包各对应一种外形，每个模组
+配一个左右交替的气泡显示自己的 SOC 与温度（和 App 的 HiBattery X 页面一致）。
+
+```yaml
+type: custom:hoymiles-battery
+dev_id: MSA-280520260806
+title: HiBattery X        # 可选
+language: zh              # 可选 en|zh
+show_history: true        # 可选，默认 true（需启用 recorder）
+max_width: 560            # 可选，插图最大宽度
+alarm_entity: binary_sensor.x   # 可选，为 on 时标题左侧显示铃铛
+```
+
+- 电池数量优先取 `pack_count`（`device/state` 的 `pack_num`），缺失时按实际能读到
+  SOC 的 `pack1_soc`…`pack4_soc` 推断，上限 4（与固件 `packs` 截断一致）。
+- 逐包数据用 `pack<i>_soc` / `pack<i>_temperature`；四周功率用 `pv_power`、
+  `grid_on_power`、`grid_off_power`、`battery_power`。
+- 标题右侧的信号格数由 `rssi`（dBm）换算。
+- 历史数据区（可选）通过 `recorder/statistics_during_period` 读取长期统计，画 SOC
+  曲线并汇总该区间的充电 / 放电电量；recorder 未启用时只提示、不影响其余部分。
+
+## 电池包列表卡片
+
+电池堆插图的紧凑替代：一行一个电池包，左侧 SOC 进度条、中间温度、右侧加热标记。
+包数量与电池卡片用同一套规则（`pack_count` 优先，缺失时按能读到 SOC 的包推断）。
+
+```yaml
+type: custom:hoymiles-pack-list
+dev_id: MSA-280520260806
+language: zh
+title: 电池包
+columns: 2                # 可选，按 N 列排布；不填为单列
+```
+
+## 历史数据卡片
+
+按**日 / 月 / 年**查看曲线，并可用 `‹` `›` 或日期输入框翻到任意时间段。
+正值向上、负值向下堆叠，因此「充电 / 放电」这类双极性传感器会自然地分居 0 线两侧。
+
+```yaml
+type: custom:hoymiles-history-chart
+dev_id: MSA-280520260806      # 可选（所有 series 都给了 entity 时可省）
+title: 历史数据
+language: zh
+range: day                    # 初始范围 day | month | year
+height: 330                   # 可选，SVG 高度
+unit: W                       # 可选，纵轴单位（超过 1.5 kW 自动换成 kW）
+zero_line: true               # 可选，是否画 0 线（默认 true）
+symmetric: true               # 可选，false = 从 min 到 max 自底向上（SOC 用）
+min: 0                        # 可选，固定下限
+max: 100                      # 可选，固定上限
+span: 2500                    # 可选，对称模式下固定半量程
+series:                       # 必填，每条曲线一项
+  - entity: sensor.x_pv_power
+    name: 发电功率
+    color: "#22c55e"
+  - entity: sensor.x_system_battery_power
+    name: 放电[+]/充电[-]
+    color: "#4a90d9"
+```
+
+- 数据同样来自 `recorder/statistics_during_period`（长期统计，**无需管理员权限**）。
+- 纵轴刻度会按实际步长自动决定小数位（例如 1.25 kW 的步长会显示 `1.25` 而不是取整成 `1`）。
+- 固定 `span` / `min` / `max` 可让同一组曲线在不同日子保持同一量程，便于横向对比。
+
+## 仪表盘卡片
+
+HA 自带 `gauge` 卡片的轻量替代，针对本设备做了两点补齐：
+
+- **可以换单位**（`scale`），直接把 Wh 传感器显示成 kWh，不需要额外的 template 传感器；
+- **可以不给 `max`**，此时表盘随数值增长（适合「今日发电量」这类没有固定上限的量）。
+
+```yaml
+type: custom:hoymiles-gauge
+entity: sensor.msa_280520260806_battery_discharge_energy_today
+name: 今日放电量
+unit: kWh                 # 可选，显示单位
+scale: 0.001              # 可选，显示前的换算系数（Wh → kWh）
+max: 10                   # 可选（显示单位）；不填表示自适应
+min: 0                    # 可选，默认 0
+decimals: 2               # 可选，默认 2
+severity:                 # 可选，色带阈值（显示单位）
+  red: 0
+  yellow: 2
+  green: 5
+```
+
+## 控制面板卡片
+
+把《禾迈微储 MQTT 协议开发指南 V0.5.1》里**所有可下发的控制**做成按钮 / 输入框。
+指令**直接发布到协议 topic**（qos 1、retain false），因此即使某个 discovery 实体缺失
+或选项列表比协议窄，卡片也仍可用；当前值则从对应实体回读。
+
+```yaml
+type: custom:hoymiles-control
+dev_id: MSA-280520260806
+language: zh
+title: 设备控制
+show_power_ctrl: true     # 可选，默认 true（隐藏「功率控制」行）
+show_phase: true          # 可选，默认 true（隐藏「多相输出功率」行）
+```
+
+| 行 | 协议 topic | 说明 |
+|---|---|---|
+| 设备开关 | `switch/<dev_id>/set` | `ON` / `OFF` |
+| EMS 模式 | `select/<dev_id>/ems_mode/command` | `general` / `mqtt_ctrl` / `tou_plan`，不支持的选项自动置灰 |
+| 功率控制 | `number/<dev_id>/power_ctrl/set` | 仅 `mqtt_ctrl` 模式有效，需至少每分钟下发一次 |
+| 输出功率 | `number/<dev_id>/output_power/set` | 满载输出上限（W） |
+| 多相输出功率 | `number/<dev_id>/phase_output_power/set` | 按 `{"phase_a":..,"phase_b":..,"phase_c":..}` 下发 |
+| 获取 TOU 计划 | `sensor/<dev_id>/tou_plan/get` | 应答发布在 `tou_plan/status` |
+| 重启设备 | `button/<dev_id>/reboot/trigger` | 二次确认后发 `RESTART` |
+
+> 卡片的范围提示（如 `-1000 ~ 1000 W`）优先读实体的 `min` / `max` 属性，
+> 读不到时用协议默认值。
 
 ---
 
