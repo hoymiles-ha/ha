@@ -3,9 +3,10 @@
  * ----------------------------------------------------------------------------
  * Lovelace card: `custom:hoymiles-gauge`
  *
- * A car-dashboard dial: a graduated scale with tick labels, an optional
- * coloured zone strip (severity), a needle and a digital readout — matching
- * the vendor app's stat dials (今日发电量 / 今日放电量 / 今日充电量, 电池 SOC ...).
+ * A stat tile with a single progress arc, like the vendor app's summary cards:
+ * the title and an optional icon on top, the value underneath, and one green
+ * arc at the bottom filled by the value's percentage of `min`..`max`, with the
+ * percentage printed inside it.
  *
  * It differs from Home Assistant's built-in `gauge` card in two ways that
  * matter for this device:
@@ -16,17 +17,15 @@
  * Card config:
  *   type: custom:hoymiles-gauge
  *   entity: sensor.x_battery_discharge_energy_today
- *   name: 今日放电量
+ *   name: 当日发电量
  *   unit: kWh                 # optional display unit
  *   scale: 0.001              # optional multiplier applied before display
  *   max: 5                    # optional (in display units)
  *   min: 0                    # optional (default 0)
  *   decimals: 2               # optional (default 2)
- *   ticks: 5                  # optional number of labelled ticks (default 5)
- *   severity:                 # optional coloured zones, in display units
- *     green: 3
- *     yellow: 1
- *     red: 0
+ *   icon: ☀️                   # optional, shown next to the title
+ *   label: 自发自用率          # optional caption under the percentage
+ *   color: "#22c55e"          # optional arc colour (default green)
  * ========================================================================== */
 
 function _hmGaugeRegister() {
@@ -35,38 +34,21 @@ function _hmGaugeRegister() {
   const css = LitElement.prototype.css;
 
   /* ------------------------------------------------------------------ *
-   * Dial geometry. The scale and the needle sit on the outside, the progress
-   * arc inside them, and the digital readout uses the opening at the bottom.
+   * Arc geometry: one half circle over a centre that sits on the bottom edge,
+   * so the card shows a simple arch.
    * ------------------------------------------------------------------ */
-  const VB_W = 240;
-  const VB_H = 176;
+  const VB_W = 220;
+  const VB_H = 126;
   const CX = VB_W / 2;
-  const CY = 100;          // needle pivot
-  const START_DEG = 150;   // bottom-left, opening at the bottom
-  const SWEEP_DEG = 240;   // sweeps clockwise to 30 deg (bottom-right)
+  const CY = 110;          // centre, on the bottom edge of the viewBox
+  const R_ARC = 84;
+  const ARC_STROKE = 14;
+  const START_DEG = 180;   // nine o'clock
+  const SWEEP_DEG = 180;   // over the top to three o'clock
+  const PCT_Y = CY - 20;   // percentage, inside the arch
+  const LABEL_Y = CY + 2;  // caption under it
 
-  const R_TICK_OUT = 96;
-  const R_TICK_MAJOR = 86;
-  const R_TICK_MINOR = 91;
-  const R_ZONE = 80;       // severity strip, just under the ticks
-  const R_NUM = 66;        // tick labels
-  const R_ARC = 52;        // progress track
-  const ARC_STROKE = 12;
-  const NEEDLE_LEN = 30;
-  const HUB_R = 7;
-  const VALUE_Y = CY + 46;
-  const UNIT_Y = CY + 62;
-
-  const DEFAULT_TICKS = 5;
-  const MINOR_PER_MAJOR = 4;
-
-  const LEVEL_COLORS = {
-    red: "#db4437",
-    yellow: "#ffa600",
-    orange: "#ffa600",
-    green: "#0da035",
-    blue: "#4a90d9",
-  };
+  const DEFAULT_COLOR = "#22c55e";
 
   function num(value) {
     if (typeof value === "number") return Number.isFinite(value) ? value : 0;
@@ -87,14 +69,8 @@ function _hmGaugeRegister() {
     return parts.join(".");
   }
 
-  /** Smallest number of decimals (0..2) that renders `step` exactly. */
-  function decimalsFor(step) {
-    const abs = Math.abs(num(step));
-    if (!(abs > 0)) return 0;
-    for (let d = 0; d <= 2; d += 1) {
-      if (Math.abs(abs - Number(abs.toFixed(d))) < abs * 1e-6) return d;
-    }
-    return 2;
+  function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
   }
 
   function polar(deg, radius) {
@@ -136,16 +112,24 @@ function _hmGaugeRegister() {
     static get styles() {
       return css`
         :host { display: block; }
-        ha-card { padding: 10px 12px 12px; }
-        .name { font-size: 13px; color: var(--secondary-text-color);
-                text-align: center; margin-top: 2px; }
-        svg { display: block; width: 100%; height: auto; }
-        .value { font-size: 28px; font-weight: 600;
-                 fill: var(--primary-text-color); letter-spacing: 0.3px; }
-        .unit { font-size: 12px; fill: var(--secondary-text-color); }
-        .num { font-size: 10px; fill: var(--secondary-text-color); }
+        ha-card { padding: 14px 16px 8px; }
+        .head { display: flex; align-items: flex-start;
+                justify-content: space-between; gap: 10px; }
+        .name { font-size: 15px; font-weight: 500;
+                color: var(--primary-text-color); line-height: 1.3; }
+        .icon { font-size: 19px; line-height: 1; flex: none; }
+        .readout { display: flex; align-items: baseline; gap: 6px;
+                   margin: 10px 0 0; }
+        .value { font-size: 34px; font-weight: 700;
+                 color: var(--primary-text-color); letter-spacing: 0.3px; }
+        .unit { font-size: 15px; color: var(--secondary-text-color); }
+        .dial { margin-top: -4px; }
+        .dial svg { display: block; width: 100%; height: auto; }
+        .pct { font-size: 26px; font-weight: 600;
+               fill: var(--primary-text-color); }
+        .cap { font-size: 12.5px; fill: var(--secondary-text-color); }
         .na { font-size: 13px; color: var(--secondary-text-color);
-              text-align: center; padding: 28px 0; }
+              text-align: center; padding: 24px 0; }
       `;
     }
 
@@ -192,25 +176,10 @@ function _hmGaugeRegister() {
       if (this._config.max != null) return num(this._config.max);
       const value = this._read();
       if (value == null) return 100;
-      // Grow the dial gently so the needle stays informative.
+      // Grow the dial gently so the arc stays informative.
       if (value <= 0) return 1;
       const exp = Math.pow(10, Math.floor(Math.log10(value)));
       return Math.ceil(value / exp) * exp;
-    }
-
-    /** `severity` accepts HA's `{green: 60, yellow: 25, red: 0}` shape. */
-    _bands(min, max) {
-      const severity = this._config.severity;
-      if (!severity || typeof severity !== "object") return null;
-      const entries = Object.entries(severity)
-        .map(([level, from]) => ({ from: num(from), color: LEVEL_COLORS[level] || level }))
-        .sort((a, b) => a.from - b.from);
-      if (!entries.length) return null;
-      return entries.map((entry, i) => ({
-        from: entry.from,
-        to: i + 1 < entries.length ? entries[i + 1].from : Math.max(max, entry.from),
-        color: entry.color,
-      })).filter((b) => b.to > b.from);
     }
 
     /* ----------------------------- rendering ----------------------------- */
@@ -218,103 +187,58 @@ function _hmGaugeRegister() {
     render() {
       if (!this._config) return html``;
       const value = this._read();
-      const max = Math.max(this._max(), 1e-9);
+      const name = this._config.name || this._config.entity;
+      const icon = this._config.icon == null ? "" : String(this._config.icon);
       const min = this._config.min == null ? 0 : num(this._config.min);
-
-      if (value == null) {
-        return html`<ha-card>
-          <div class="na">${esc(this._config.name || this._config.entity)}: —</div>
-        </ha-card>`;
-      }
+      const max = Math.max(this._max(), 1e-9);
+      // A missing state still draws the empty arch: a bare "-" on a blank card
+      // reads like a broken card, an arc at 0 % does not.
+      const frac = value == null ? 0 : clamp((value - min) / (max - min || 1), 0, 1);
+      const shown = value == null ? "—" : group(value.toFixed(this._decimals()));
+      const unit = this._unit();
 
       return html`
         <ha-card>
-          ${this._untrusted(this._svg(value, min, max))}
-          <div class="name">${esc(this._config.name || this._config.entity)}</div>
+          <div class="head">
+            <div class="name">${esc(name)}</div>
+            ${icon === "" ? "" : html`<div class="icon">${esc(icon)}</div>`}
+          </div>
+          <div class="readout">
+            <span class="value">${shown}</span>
+            ${unit === "" || value == null ? "" : html`<span class="unit">${esc(unit)}</span>`}
+          </div>
+          <div class="dial">${this._untrusted(this._arc(frac, value != null))}</div>
         </ha-card>
       `;
     }
 
     /**
-     * The whole dial, as one `<svg>` string.
+     * The arch, as one `<svg>` string.
      *
      * It has to be a single string that starts with `<svg>`: markup parsed
      * outside an SVG context lands in the HTML namespace, and the browser then
-     * silently refuses to draw it (that is why the arcs and the needle used to
-     * be invisible). Concatenating everything here keeps the parser in foreign
-     * content mode for all of it.
+     * silently refuses to draw it (that is why the arcs used to be invisible).
      */
-    _svg(value, min, max) {
-      const span = max - min || 1;
-      const frac = (v) => Math.min(Math.max((num(v) - min) / span, 0), 1);
-      const bands = this._bands(min, max);
-      const tickCount = Math.max(2, Math.round(num(this._config.ticks) || DEFAULT_TICKS));
-      const majorStep = (max - min) / (tickCount - 1);
-      const labelDecimals = decimalsFor(majorStep);
-
-      /* graduated scale: minor ticks between the labelled majors */
-      const steps = (tickCount - 1) * MINOR_PER_MAJOR;
-      let scale = "";
-      for (let i = 0; i <= steps; i += 1) {
-        const major = i % MINOR_PER_MAJOR === 0;
-        const angle = START_DEG + SWEEP_DEG * (i / steps);
-        const inner = polar(angle, major ? R_TICK_MAJOR : R_TICK_MINOR);
-        const outer = polar(angle, R_TICK_OUT);
-        scale += `<line x1="${inner.x.toFixed(2)}" y1="${inner.y.toFixed(2)}"`
-          + ` x2="${outer.x.toFixed(2)}" y2="${outer.y.toFixed(2)}"`
-          + ` stroke="${major ? "var(--primary-text-color)" : "var(--secondary-text-color)"}"`
-          + ` stroke-width="${major ? 2.1 : 1.2}" stroke-linecap="round"`
-          + ` opacity="${major ? 0.8 : 0.45}"/>`;
-      }
-      for (let i = 0; i < tickCount; i += 1) {
-        const p = polar(START_DEG + SWEEP_DEG * (i / (tickCount - 1)), R_NUM);
-        const label = Number((min + majorStep * i).toFixed(labelDecimals));
-        scale += `<text class="num" x="${p.x.toFixed(2)}" y="${(p.y + 3.6).toFixed(2)}"`
-          + ` text-anchor="middle">${esc(group(String(label)))}</text>`;
-      }
-
-      /* severity zones, drawn as a coloured strip under the ticks */
-      let zones = "";
-      if (bands) {
-        for (const band of bands) {
-          const from = frac(band.from);
-          const to = frac(band.to);
-          if (to - from < 0.004) continue;
-          zones += `<path d="${arcPath(from, to, R_ZONE)}" fill="none"`
-            + ` stroke="${esc(band.color)}" stroke-width="5"`
-            + ` stroke-linecap="butt" opacity="0.75"/>`;
-        }
-      }
-
-      /* progress track + fill */
-      const filled = frac(value);
+    _arc(frac, hasValue = true) {
+      const color = this._config.color || DEFAULT_COLOR;
+      const percent = Math.round(frac * 100);
       const track = `<path d="${arcPath(0, 1, R_ARC)}" fill="none"`
         + ` stroke="var(--divider-color)" stroke-width="${ARC_STROKE}"`
-        + ` stroke-linecap="round" opacity="0.5"/>`;
-      const progress = filled <= 0.002 ? ""
-        : `<path d="${arcPath(0, filled, R_ARC)}" fill="none"`
-          + ` stroke="var(--primary-color)" stroke-width="${ARC_STROKE}"`
+        + ` stroke-linecap="round" opacity="0.45"/>`;
+      const progress = !hasValue || frac <= 0.002 ? ""
+        : `<path d="${arcPath(0, frac, R_ARC)}" fill="none"`
+          + ` stroke="${esc(color)}" stroke-width="${ARC_STROKE}"`
           + ` stroke-linecap="round"/>`;
-
-      /* needle + hub */
-      const angle = START_DEG + SWEEP_DEG * filled;
-      const tip = polar(angle, NEEDLE_LEN);
-      const back = polar(angle + 180, 11);
-      const needle = `<line x1="${back.x.toFixed(2)}" y1="${back.y.toFixed(2)}"`
-        + ` x2="${tip.x.toFixed(2)}" y2="${tip.y.toFixed(2)}"`
-        + ` stroke="var(--primary-text-color)" stroke-width="3.4" stroke-linecap="round"/>`
-        + `<circle cx="${CX}" cy="${CY}" r="${HUB_R}" fill="var(--primary-text-color)"/>`;
-
-      /* digital readout, sitting in the opening at the bottom */
-      const unit = this._unit();
-      const readout = `<text class="value" x="${CX}" y="${VALUE_Y}"`
-        + ` text-anchor="middle">${esc(group(value.toFixed(this._decimals())))}</text>`
-        + (unit === "" ? "" : `<text class="unit" x="${CX}" y="${UNIT_Y}"`
-          + ` text-anchor="middle">${esc(unit)}</text>`);
+      const caption = this._config.label == null ? ""
+        : `<text class="cap" x="${CX}" y="${LABEL_Y}"`
+          + ` text-anchor="middle">${esc(this._config.label)}</text>`;
 
       return `<svg viewBox="0 0 ${VB_W} ${VB_H}" preserveAspectRatio="xMidYMid meet"`
         + ` xmlns="http://www.w3.org/2000/svg" role="img">`
-        + `${scale}${zones}${track}${progress}${needle}${readout}</svg>`;
+        + `${track}${progress}`
+        + `<text class="pct" x="${CX}" y="${PCT_Y}"`
+        + ` text-anchor="middle">${hasValue ? `${percent}%` : "—"}</text>`
+        + `${caption}</svg>`;
     }
 
     _untrusted(markup) {
@@ -365,8 +289,12 @@ function _hmGaugeRegister() {
             @change=${this._changed("scale")}></ha-textfield>
           <ha-textfield label="max" .value=${config.max || ""}
             @change=${this._changed("max")}></ha-textfield>
-          <ha-textfield label="ticks (default 5)" .value=${config.ticks || ""}
-            @change=${this._changed("ticks")}></ha-textfield>
+          <ha-textfield label="icon (emoji)" .value=${config.icon || ""}
+            @change=${this._changed("icon")}></ha-textfield>
+          <ha-textfield label="label (百分比下的说明)" .value=${config.label || ""}
+            @change=${this._changed("label")}></ha-textfield>
+          <ha-textfield label="color (default #22c55e)" .value=${config.color || ""}
+            @change=${this._changed("color")}></ha-textfield>
         </div>
       `;
     }

@@ -67,19 +67,24 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     Every asset listed in ``const.FRONTEND_ASSETS`` is published under
     ``FRONTEND_URL`` and appended with ``add_extra_js_url``, so users never
     have to register the cards manually as Lovelace resources.
+
+    The injected URL carries the file's modification time as a query string.
+    Without it a browser that already cached the module keeps running the old
+    code after an update (the card silently does nothing) until the user clears
+    the cache by hand; a changed file now simply gets a new URL.
     """
     domain_data = hass.data.setdefault(DOMAIN, {})
     if domain_data.get("_frontend_registered"):
         return
 
     www_dir = Path(__file__).parent / "www"
-    assets: list[tuple[str, str]] = []
+    assets: list[tuple[str, str, int]] = []
     for filename in FRONTEND_ASSETS:
         asset_path = www_dir / filename
         if not asset_path.is_file():
             _LOGGER.warning("Bundled frontend asset %s is missing, skipping", asset_path)
             continue
-        assets.append((f"{FRONTEND_URL}/{filename}", str(asset_path)))
+        assets.append((f"{FRONTEND_URL}/{filename}", str(asset_path), _asset_version(asset_path)))
 
     if not assets:
         _LOGGER.warning("No frontend assets found in %s, skipping frontend setup", www_dir)
@@ -94,21 +99,31 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         from homeassistant.components.http import StaticPathConfig  # noqa: PLC0415
 
         await http.async_register_static_paths(
-            [StaticPathConfig(url, path, cache_headers=False) for url, path in assets]
+            [StaticPathConfig(url, path, cache_headers=False) for url, path, _v in assets]
         )
     except ImportError:
         # Home Assistant < 2024.7
-        for url, path in assets:
+        for url, path, _v in assets:
             http.register_static_path(url, path, False)
 
     try:
         from homeassistant.components.frontend import add_extra_js_url  # noqa: PLC0415
 
-        for url, _path in assets:
-            add_extra_js_url(hass, url)
+        # The version is only used to bust the browser cache: the static path
+        # handler routes on the path and ignores the query string.
+        for url, _path, version in assets:
+            add_extra_js_url(hass, f"{url}?v={version}")
     except Exception:  # noqa: BLE001 - never break setup because of the card
         _LOGGER.warning("Unable to register the Hoymiles frontend cards", exc_info=True)
         return
 
     domain_data["_frontend_registered"] = True
-    _LOGGER.debug("Registered frontend assets: %s", [url for url, _ in assets])
+    _LOGGER.debug("Registered frontend assets: %s", [url for url, _p, _v in assets])
+
+
+def _asset_version(path: Path) -> int:
+    """Return a cache-busting token for one bundled asset."""
+    try:
+        return int(path.stat().st_mtime)
+    except OSError:  # pragma: no cover - unreadable file, not worth failing over
+        return 0
