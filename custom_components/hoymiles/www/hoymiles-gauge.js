@@ -3,8 +3,9 @@
  * ----------------------------------------------------------------------------
  * Lovelace card: `custom:hoymiles-gauge`
  *
- * A single-value arc gauge with a needle and colour bands, matching the vendor
- * app's stat dials (今日发电量 / 今日放电量 / 今日充电量, 电池 SOC ...).
+ * A car-dashboard dial: a graduated scale with tick labels, an optional
+ * coloured zone strip (severity), a needle and a digital readout — matching
+ * the vendor app's stat dials (今日发电量 / 今日放电量 / 今日充电量, 电池 SOC ...).
  *
  * It differs from Home Assistant's built-in `gauge` card in two ways that
  * matter for this device:
@@ -19,8 +20,10 @@
  *   unit: kWh                 # optional display unit
  *   scale: 0.001              # optional multiplier applied before display
  *   max: 5                    # optional (in display units)
+ *   min: 0                    # optional (default 0)
  *   decimals: 2               # optional (default 2)
- *   severity:                 # optional, in display units
+ *   ticks: 5                  # optional number of labelled ticks (default 5)
+ *   severity:                 # optional coloured zones, in display units
  *     green: 3
  *     yellow: 1
  *     red: 0
@@ -31,14 +34,31 @@ function _hmGaugeRegister() {
   const html = LitElement.prototype.html;
   const css = LitElement.prototype.css;
 
-  const VB_W = 220;
-  const VB_H = 150;
+  /* ------------------------------------------------------------------ *
+   * Dial geometry. The scale and the needle sit on the outside, the progress
+   * arc inside them, and the digital readout uses the opening at the bottom.
+   * ------------------------------------------------------------------ */
+  const VB_W = 240;
+  const VB_H = 176;
   const CX = VB_W / 2;
-  const CY = 118;
-  const R = 82;
-  const STROKE = 15;
-  const START_DEG = 135;   // bottom-left
-  const SWEEP_DEG = 270;   // ends bottom-right
+  const CY = 100;          // needle pivot
+  const START_DEG = 150;   // bottom-left, opening at the bottom
+  const SWEEP_DEG = 240;   // sweeps clockwise to 30 deg (bottom-right)
+
+  const R_TICK_OUT = 96;
+  const R_TICK_MAJOR = 86;
+  const R_TICK_MINOR = 91;
+  const R_ZONE = 80;       // severity strip, just under the ticks
+  const R_NUM = 66;        // tick labels
+  const R_ARC = 52;        // progress track
+  const ARC_STROKE = 12;
+  const NEEDLE_LEN = 30;
+  const HUB_R = 7;
+  const VALUE_Y = CY + 46;
+  const UNIT_Y = CY + 62;
+
+  const DEFAULT_TICKS = 5;
+  const MINOR_PER_MAJOR = 4;
 
   const LEVEL_COLORS = {
     red: "#db4437",
@@ -58,6 +78,23 @@ function _hmGaugeRegister() {
     return String(text == null ? "" : text).replace(/[&<>"']/g, (ch) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
     }[ch]));
+  }
+
+  /** "1234.50" -> "1 234.50"; keeps the big readouts readable. */
+  function group(text) {
+    const parts = String(text).split(".");
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, "\u2009");
+    return parts.join(".");
+  }
+
+  /** Smallest number of decimals (0..2) that renders `step` exactly. */
+  function decimalsFor(step) {
+    const abs = Math.abs(num(step));
+    if (!(abs > 0)) return 0;
+    for (let d = 0; d <= 2; d += 1) {
+      if (Math.abs(abs - Number(abs.toFixed(d))) < abs * 1e-6) return d;
+    }
+    return 2;
   }
 
   function polar(deg, radius) {
@@ -103,9 +140,10 @@ function _hmGaugeRegister() {
         .name { font-size: 13px; color: var(--secondary-text-color);
                 text-align: center; margin-top: 2px; }
         svg { display: block; width: 100%; height: auto; }
-        .value { font-size: 27px; font-weight: 600;
+        .value { font-size: 28px; font-weight: 600;
                  fill: var(--primary-text-color); letter-spacing: 0.3px; }
-        .unit { font-size: 13px; fill: var(--secondary-text-color); }
+        .unit { font-size: 12px; fill: var(--secondary-text-color); }
+        .num { font-size: 10px; fill: var(--secondary-text-color); }
         .na { font-size: 13px; color: var(--secondary-text-color);
               text-align: center; padding: 28px 0; }
       `;
@@ -182,7 +220,6 @@ function _hmGaugeRegister() {
       const value = this._read();
       const max = Math.max(this._max(), 1e-9);
       const min = this._config.min == null ? 0 : num(this._config.min);
-      const span = max - min || 1;
 
       if (value == null) {
         return html`<ha-card>
@@ -190,55 +227,94 @@ function _hmGaugeRegister() {
         </ha-card>`;
       }
 
+      return html`
+        <ha-card>
+          ${this._untrusted(this._svg(value, min, max))}
+          <div class="name">${esc(this._config.name || this._config.entity)}</div>
+        </ha-card>
+      `;
+    }
+
+    /**
+     * The whole dial, as one `<svg>` string.
+     *
+     * It has to be a single string that starts with `<svg>`: markup parsed
+     * outside an SVG context lands in the HTML namespace, and the browser then
+     * silently refuses to draw it (that is why the arcs and the needle used to
+     * be invisible). Concatenating everything here keeps the parser in foreign
+     * content mode for all of it.
+     */
+    _svg(value, min, max) {
+      const span = max - min || 1;
       const frac = (v) => Math.min(Math.max((num(v) - min) / span, 0), 1);
       const bands = this._bands(min, max);
+      const tickCount = Math.max(2, Math.round(num(this._config.ticks) || DEFAULT_TICKS));
+      const majorStep = (max - min) / (tickCount - 1);
+      const labelDecimals = decimalsFor(majorStep);
 
-      let arcs = `<path d="${arcPath(0, 1, R)}" fill="none"
-        stroke="var(--divider-color)" stroke-width="${STROKE}" stroke-linecap="round"
-        opacity="0.5"/>`;
+      /* graduated scale: minor ticks between the labelled majors */
+      const steps = (tickCount - 1) * MINOR_PER_MAJOR;
+      let scale = "";
+      for (let i = 0; i <= steps; i += 1) {
+        const major = i % MINOR_PER_MAJOR === 0;
+        const angle = START_DEG + SWEEP_DEG * (i / steps);
+        const inner = polar(angle, major ? R_TICK_MAJOR : R_TICK_MINOR);
+        const outer = polar(angle, R_TICK_OUT);
+        scale += `<line x1="${inner.x.toFixed(2)}" y1="${inner.y.toFixed(2)}"`
+          + ` x2="${outer.x.toFixed(2)}" y2="${outer.y.toFixed(2)}"`
+          + ` stroke="${major ? "var(--primary-text-color)" : "var(--secondary-text-color)"}"`
+          + ` stroke-width="${major ? 2.1 : 1.2}" stroke-linecap="round"`
+          + ` opacity="${major ? 0.8 : 0.45}"/>`;
+      }
+      for (let i = 0; i < tickCount; i += 1) {
+        const p = polar(START_DEG + SWEEP_DEG * (i / (tickCount - 1)), R_NUM);
+        const label = Number((min + majorStep * i).toFixed(labelDecimals));
+        scale += `<text class="num" x="${p.x.toFixed(2)}" y="${(p.y + 3.6).toFixed(2)}"`
+          + ` text-anchor="middle">${esc(group(String(label)))}</text>`;
+      }
 
+      /* severity zones, drawn as a coloured strip under the ticks */
+      let zones = "";
       if (bands) {
         for (const band of bands) {
           const from = frac(band.from);
           const to = frac(band.to);
-          if (to - from < 0.001) continue;
-          arcs += `<path d="${arcPath(from, to, R)}" fill="none" stroke="${esc(band.color)}"
-            stroke-width="${STROKE}" stroke-linecap="butt"/>`;
+          if (to - from < 0.004) continue;
+          zones += `<path d="${arcPath(from, to, R_ZONE)}" fill="none"`
+            + ` stroke="${esc(band.color)}" stroke-width="5"`
+            + ` stroke-linecap="butt" opacity="0.75"/>`;
         }
-      } else {
-        arcs += `<path d="${arcPath(0, frac(value), R)}" fill="none"
-          stroke="var(--primary-color)" stroke-width="${STROKE}" stroke-linecap="round"/>`;
       }
 
-      // needle
-      const deg = START_DEG + SWEEP_DEG * frac(value);
-      const tip = polar(deg, R - STROKE / 2 - 3);
-      const back = polar(deg + 180, 13);
-      const needle = `<line x1="${back.x.toFixed(1)}" y1="${back.y.toFixed(1)}"
-          x2="${tip.x.toFixed(1)}" y2="${tip.y.toFixed(1)}"
-          stroke="var(--primary-text-color)" stroke-width="3.1" stroke-linecap="round"/>
-        <circle cx="${CX}" cy="${CY}" r="6.5" fill="var(--primary-text-color)"/>`;
+      /* progress track + fill */
+      const filled = frac(value);
+      const track = `<path d="${arcPath(0, 1, R_ARC)}" fill="none"`
+        + ` stroke="var(--divider-color)" stroke-width="${ARC_STROKE}"`
+        + ` stroke-linecap="round" opacity="0.5"/>`;
+      const progress = filled <= 0.002 ? ""
+        : `<path d="${arcPath(0, filled, R_ARC)}" fill="none"`
+          + ` stroke="var(--primary-color)" stroke-width="${ARC_STROKE}"`
+          + ` stroke-linecap="round"/>`;
 
-      const decimals = this._decimals();
-      const parts = value.toFixed(decimals).split(".");
-      const shown = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, "\u2009")
-        + (parts[1] ? `.${parts[1]}` : "");
+      /* needle + hub */
+      const angle = START_DEG + SWEEP_DEG * filled;
+      const tip = polar(angle, NEEDLE_LEN);
+      const back = polar(angle + 180, 11);
+      const needle = `<line x1="${back.x.toFixed(2)}" y1="${back.y.toFixed(2)}"`
+        + ` x2="${tip.x.toFixed(2)}" y2="${tip.y.toFixed(2)}"`
+        + ` stroke="var(--primary-text-color)" stroke-width="3.4" stroke-linecap="round"/>`
+        + `<circle cx="${CX}" cy="${CY}" r="${HUB_R}" fill="var(--primary-text-color)"/>`;
+
+      /* digital readout, sitting in the opening at the bottom */
       const unit = this._unit();
+      const readout = `<text class="value" x="${CX}" y="${VALUE_Y}"`
+        + ` text-anchor="middle">${esc(group(value.toFixed(this._decimals())))}</text>`
+        + (unit === "" ? "" : `<text class="unit" x="${CX}" y="${UNIT_Y}"`
+          + ` text-anchor="middle">${esc(unit)}</text>`);
 
-      return html`
-        <ha-card>
-          <svg viewBox="0 0 ${VB_W} ${VB_H}" preserveAspectRatio="xMidYMid meet"
-               xmlns="http://www.w3.org/2000/svg" role="img">
-            ${this._untrusted(arcs)}
-            ${this._untrusted(needle)}
-            <text class="value" x="${CX}" y="${CY - 22}" text-anchor="middle">${shown}</text>
-            ${unit === "" ? "" : this._untrusted(
-              `<text class="unit" x="${CX}" y="${CY - 4}" text-anchor="middle">${esc(unit)}</text>`,
-            )}
-          </svg>
-          <div class="name">${esc(this._config.name || this._config.entity)}</div>
-        </ha-card>
-      `;
+      return `<svg viewBox="0 0 ${VB_W} ${VB_H}" preserveAspectRatio="xMidYMid meet"`
+        + ` xmlns="http://www.w3.org/2000/svg" role="img">`
+        + `${scale}${zones}${track}${progress}${needle}${readout}</svg>`;
     }
 
     _untrusted(markup) {
@@ -289,6 +365,8 @@ function _hmGaugeRegister() {
             @change=${this._changed("scale")}></ha-textfield>
           <ha-textfield label="max" .value=${config.max || ""}
             @change=${this._changed("max")}></ha-textfield>
+          <ha-textfield label="ticks (default 5)" .value=${config.ticks || ""}
+            @change=${this._changed("ticks")}></ha-textfield>
         </div>
       `;
     }
