@@ -30,6 +30,10 @@
  *                                   # (use it for SOC: min 0 / max 100)
  *   min / max: 0 / 100              # optional fixed axis limits
  *   span: 2500                      # optional fixed half-range when symmetric
+ *   sync_group: living-room         # optional; cards sharing a group share
+ *                                   # their time window (range + date)
+ *   show_toolbar: false             # optional; hide this card's own toolbar
+ *                                   # (use it on the followers)
  *   series:                         # required, one entry per curve
  *     - entity: sensor.x_pv_power
  *       name: 发电功率
@@ -62,6 +66,17 @@ function _hmHistoryRegister() {
   ];
 
   const DEFAULT_COLORS = ["#22c55e", "#4a90d9", "#22d3ee", "#f5a623", "#a78bfa"];
+
+  /* ------------------------------------------------------------------ *
+   * Time-window sharing.
+   *
+   * Cards that declare the same `sync_group` keep one window between them, so
+   * a dashboard can pair e.g. a power chart with an SOC chart and drive both
+   * from a single toolbar. The group holds the last window plus the set of
+   * member cards; whichever card the user touches publishes to the others.
+   * Membership is per DOM lifetime, so removing a card cannot leak.
+   * ------------------------------------------------------------------ */
+  const SYNC_GROUPS = new Map();
 
   /* ------------------------------------------------------------------ *
    * Helpers
@@ -172,6 +187,17 @@ function _hmHistoryRegister() {
       this._hover = -1;
       this._selected = -1;
       this._token = 0;
+      this._syncJoined = null;
+    }
+
+    connectedCallback() {
+      super.connectedCallback();
+      this._joinSync();
+    }
+
+    disconnectedCallback() {
+      super.disconnectedCallback();
+      this._leaveSync();
     }
 
     static getConfigElement() {
@@ -187,21 +213,35 @@ function _hmHistoryRegister() {
         :host { display: block; }
         ha-card { padding: 12px 16px 14px; }
         .head { display: flex; flex-wrap: wrap; gap: 8px 12px;
-                align-items: center; justify-content: space-between; }
+                align-items: center; }
         .title { font-size: 16px; font-weight: 600;
                  color: var(--primary-text-color); }
+        .head.no-title .title { display: none; }
         .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-        select, input {
+        .toolbar select {
           font: inherit; font-size: 13px; color: var(--primary-text-color);
           background: var(--card-background-color, #fff);
-          border: 1px solid var(--divider-color); border-radius: 8px;
+          border: 1px solid var(--divider-color); border-radius: 9px;
           padding: 5px 8px; outline: none;
+        }
+        /* date navigator: one bordered pill holding ‹ date › */
+        .toolbar .nav {
+          display: flex; align-items: center; gap: 0;
+          border: 1px solid var(--divider-color); border-radius: 9px;
+          padding: 0 2px; background: var(--card-background-color, #fff);
+        }
+        .toolbar .nav input {
+          font: inherit; font-size: 13px; color: var(--primary-text-color);
+          background: none; border: none; outline: none; padding: 5px 4px;
         }
         select:focus, input:focus { border-color: var(--primary-color); }
         .navbtn {
           border: 1px solid var(--divider-color); border-radius: 8px;
           background: none; cursor: pointer; padding: 5px 10px; font: inherit;
           font-size: 13px; color: var(--primary-text-color); line-height: 1;
+        }
+        .toolbar .nav .navbtn {
+          border: none; border-radius: 7px; padding: 5px 7px; font-size: 15px;
         }
         .navbtn:hover { background: var(--secondary-background-color, rgba(127,127,127,0.1)); }
         .chart { margin-top: 8px; }
@@ -249,6 +289,7 @@ function _hmHistoryRegister() {
       };
       if (config.range) this._range = config.range;
       this._data = null;
+      this._joinSync();
       // `hass` may already be set when the dashboard is edited in place.
       if (this._hass) this._fetch();
     }
@@ -303,16 +344,12 @@ function _hmHistoryRegister() {
       else if (this._range === "year") a.setFullYear(a.getFullYear() + step);
       else a.setDate(a.getDate() + step);
       this._anchor = a;
-      this._data = null;
-      this._hover = -1;
-      this._fetch();
+      this._reload();
     }
 
     _onRangeChange(event) {
       this._range = event.target.value;
-      this._data = null;
-      this._hover = -1;
-      this._fetch();
+      this._reload();
     }
 
     _onAnchorChange(event) {
@@ -330,9 +367,77 @@ function _hmHistoryRegister() {
       }
       if (!a || Number.isNaN(a.getTime())) return;
       this._anchor = a;
+      this._reload();
+    }
+
+    /** Drop the cached data and refetch, then tell the group about the window. */
+    _reload() {
       this._data = null;
       this._hover = -1;
       this._fetch();
+      this._pushSync();
+    }
+
+    /* --------------------------- sync group --------------------------- */
+
+    _syncKey() {
+      const key = this._config && this._config.sync_group;
+      return key == null || key === "" || key === false ? null : String(key);
+    }
+
+    _joinSync() {
+      const key = this._syncKey();
+      if (key === this._syncJoined) return;
+      this._leaveSync();
+      if (!key) return;
+      let group = SYNC_GROUPS.get(key);
+      if (!group) {
+        group = { state: null, members: new Set() };
+        SYNC_GROUPS.set(key, group);
+      }
+      group.members.add(this);
+      this._syncJoined = key;
+      // Adopt the window the group already has, so a late card does not show a
+      // different period than the one next to it.
+      if (group.state) this._applySync(group.state);
+    }
+
+    _leaveSync() {
+      const key = this._syncJoined;
+      if (!key) return;
+      const group = SYNC_GROUPS.get(key);
+      if (group) {
+        group.members.delete(this);
+        if (!group.members.size) SYNC_GROUPS.delete(key);
+      }
+      this._syncJoined = null;
+    }
+
+    /** Publish this card's window to the rest of the group. */
+    _pushSync() {
+      const key = this._syncKey();
+      if (!key) return;
+      const group = SYNC_GROUPS.get(key);
+      if (!group) return;
+      const state = { range: this._range, anchor: this._anchor.getTime() };
+      group.state = state;
+      for (const member of group.members) {
+        if (member !== this) member._applySync(state);
+      }
+    }
+
+    /** Follow the group's window. Never pushes back, so it cannot loop. */
+    _applySync(state) {
+      if (!state) return;
+      const same = this._range === state.range
+        && this._anchor.getTime() === state.anchor;
+      if (same) return;
+      this._range = state.range;
+      this._anchor = new Date(state.anchor);
+      this._data = null;
+      this._hover = -1;
+      if (this._config && this._hass) this._fetch();
+      this.requestUpdate();
     }
 
     _anchorValue() {
@@ -484,29 +589,40 @@ function _hmHistoryRegister() {
 
     render() {
       if (!this._config) return html``;
+      const title = this._config.title === false ? ""
+        : (this._config.title || this._t("History", "历史数据"));
+
+      // The toolbar sits first so it lands in the card's top left corner.
+      return html`
+        <ha-card>
+          <div class="head">
+            ${this._config.show_toolbar === false ? "" : this._toolbar()}
+            ${title === "" ? "" : html`<div class="title">${esc(title)}</div>`}
+          </div>
+          ${this._body()}
+          ${this._legend()}
+        </ha-card>
+      `;
+    }
+
+    _toolbar() {
       const rangeOptions = RANGES.map((r) =>
         `<option value="${r.id}" ${r.id === this._range ? "selected" : ""}>${esc(this._t(r.en, r.zh))}</option>`).join("");
       const inputType = this._range === "day" ? "date"
         : this._range === "month" ? "month" : "number";
 
       return html`
-        <ha-card>
-          <div class="head">
-            <div class="title">${esc(this._config.title || this._t("History", "历史数据"))}</div>
-            <div class="toolbar">
-              <select @change=${(e) => this._onRangeChange(e)}>${this._untrusted(rangeOptions)}</select>
-              <button class="navbtn" title=${this._t("Previous", "上一个")}
-                @click=${() => this._shiftRange(-1)}>‹</button>
-              <input type=${inputType} .value=${this._anchorValue()}
-                @change=${(e) => this._onAnchorChange(e)} />
-              <button class="navbtn" title=${this._t("Next", "下一个")}
-                @click=${() => this._shiftRange(1)}>›</button>
-            </div>
+        <div class="toolbar">
+          <select @change=${(e) => this._onRangeChange(e)}>${this._untrusted(rangeOptions)}</select>
+          <div class="nav">
+            <button class="navbtn" title=${this._t("Previous", "上一个")}
+              @click=${() => this._shiftRange(-1)}>‹</button>
+            <input type=${inputType} .value=${this._anchorValue()}
+              @change=${(e) => this._onAnchorChange(e)} />
+            <button class="navbtn" title=${this._t("Next", "下一个")}
+              @click=${() => this._shiftRange(1)}>›</button>
           </div>
-          ${this._body()}
-          ${this._legend()}
-        </ha-card>
-      `;
+        </div>`;
     }
 
     _body() {
@@ -808,11 +924,21 @@ function _hmHistoryRegister() {
       };
     }
 
+    _toggle(field) {
+      return (event) => {
+        const config = { ...(this._config || {}), [field]: event.target.checked };
+        this._config = config;
+        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config } }));
+      };
+    }
+
     static get styles() {
       return css`
         .row { padding: 8px; }
         ha-textfield, ha-select { display: block; width: 100%; margin-bottom: 8px; }
         .hint { font-size: 12px; color: var(--secondary-text-color); padding: 0 10px 8px; }
+        .sw { display: flex; align-items: center; gap: 10px; padding: 6px 0;
+              font-size: 14px; color: var(--primary-text-color); }
       `;
     }
 
@@ -830,6 +956,13 @@ function _hmHistoryRegister() {
             @change=${this._changed("unit")}></ha-textfield>
           <ha-textfield label="height (px)" .value=${config.height || ""}
             @change=${this._changed("height")}></ha-textfield>
+          <ha-textfield label="sync_group" .value=${config.sync_group || ""}
+            @change=${this._changed("sync_group")}></ha-textfield>
+          <label class="sw">
+            <ha-switch .checked=${config.show_toolbar !== false}
+              @change=${this._toggle("show_toolbar")}></ha-switch>
+            <span>show_toolbar (本卡自己的时间控件)</span>
+          </label>
         </div>
         <div class="hint">
           ${"Curves are configured with the `series` list (entity / name / color) in the YAML editor."}
