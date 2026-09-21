@@ -11,8 +11,8 @@
  *     naturally on both sides of the axis;
  *   - the y axis is symmetric around 0 and auto-scales (W is promoted to kW
  *     once the range exceeds 1.5 kW, Wh to kWh ...);
- *   - hovering shows a guide line and the value of every series.
- *
+ *   - hovering shows a guide line and the value of every series. *   - clicking a legend entry highlights that series and dims the others
+ *     (clicking it again, or the chart, clears the highlight). *
  * Data comes from the Home Assistant recorder (long term statistics) through
  * the public websocket command `recorder/statistics_during_period`. The card
  * never touches the database itself, and `recorder` has to be enabled.
@@ -156,6 +156,7 @@ function _hmHistoryRegister() {
         _loading: { type: Boolean },
         _error: { type: String },
         _hover: { type: Number },
+        _selected: { type: Number },
       };
     }
 
@@ -169,6 +170,7 @@ function _hmHistoryRegister() {
       this._loading = false;
       this._error = null;
       this._hover = -1;
+      this._selected = -1;
       this._token = 0;
     }
 
@@ -215,7 +217,14 @@ function _hmHistoryRegister() {
         .legend { display: flex; flex-wrap: wrap; gap: 6px 20px;
                   justify-content: center; margin-top: 6px; }
         .li { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;
-              color: var(--primary-text-color); }
+              color: var(--primary-text-color); cursor: pointer;
+              border-radius: 8px; padding: 2px 8px;
+              transition: opacity .15s, background .15s;
+              user-select: none; }
+        .li:hover { background: var(--secondary-background-color, rgba(127,127,127,0.12)); }
+        .li.off { opacity: 0.38; }
+        .li.on { background: var(--secondary-background-color, rgba(127,127,127,0.16));
+                 font-weight: 600; }
         .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
         .msg { font-size: 13px; color: var(--secondary-text-color); padding: 26px 2px;
                text-align: center; }
@@ -513,15 +522,27 @@ function _hmHistoryRegister() {
         )}</div>`;
       }
       return html`
-        <div class="chart" @mousemove=${(e) => this._onMove(e)} @mouseleave=${() => this._setHover(-1)}>
+        <div class="chart" @mousemove=${(e) => this._onMove(e)}
+             @mouseleave=${() => this._setHover(-1)} @click=${() => this._selectSeries(-1)}>
           ${this._untrusted(this._svg(data))}
         </div>`;
     }
 
+    /**
+     * Legend rows. They are real Lit elements (not `_untrusted` markup) because
+     * they carry click handlers; each one toggles its curve's highlight.
+     */
     _legend() {
-      const items = this._config.series.map((s) => `
-        <span class="li"><i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name || s.entity)}</span>`).join("");
-      return html`<div class="legend">${this._untrusted(items)}</div>`;
+      const selected = this._selected;
+      return html`
+        <div class="legend">
+          ${this._config.series.map((s, i) => html`
+            <span class="li ${selected < 0 ? "" : selected === i ? "on" : "off"}"
+              title=${this._t("Click to highlight", "点击高亮该曲线")}
+              @click=${(e) => { e.stopPropagation(); this._selectSeries(i); }}>
+              <i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name || s.entity)}
+            </span>`)}
+        </div>`;
     }
 
     _svg(data) {
@@ -588,10 +609,17 @@ function _hmHistoryRegister() {
           text-anchor="end" style="font-size:10.5px">${esc(display.unit)}</text>`;
       }
 
-      // areas + top strokes
+      // areas + top strokes. A selected series keeps full weight, the others
+      // fade into the background so one curve can be read on its own.
+      const sel = this._selected;
       let areas = "";
-      layers.forEach((layer) => {
+      layers.forEach((layer, index) => {
         const color = layer.series.color;
+        const isSel = sel === index;
+        const dim = sel >= 0 && !isSel;
+        const fillOp = sel < 0 ? 0.32 : isSel ? 0.45 : 0.07;
+        const strokeW = isSel ? 2.4 : 1.5;
+        const strokeOp = dim ? 0.25 : 1;
         for (const side of ["pos", "neg"]) {
           const band = layer[side];
           if (!band) continue;
@@ -609,14 +637,15 @@ function _hmHistoryRegister() {
             d += `L${toX(i).toFixed(1)} ${toY(base[i]).toFixed(1)}`;
           }
           d += "Z";
-          areas += `<path d="${d}" fill="${esc(color)}" fill-opacity="0.32" stroke="none"/>`;
+          areas += `<path d="${d}" fill="${esc(color)}" fill-opacity="${fillOp}" stroke="none"/>`;
           // the visible edge of the band
           let edge = "";
           for (let i = 0; i < times.length; i += 1) {
             edge += `${i ? "L" : "M"}${toX(i).toFixed(1)} ${toY(top[i]).toFixed(1)}`;
           }
-          areas += `<path d="${edge}" fill="none" stroke="${esc(color)}" stroke-width="1.5"
-            stroke-linejoin="round" stroke-linecap="round"/>`;
+          areas += `<path d="${edge}" fill="none" stroke="${esc(color)}"`
+            + ` stroke-width="${strokeW}" stroke-opacity="${strokeOp}"`
+            + " stroke-linejoin=\"round\" stroke-linecap=\"round\"/>";
         }
       });
 
@@ -689,6 +718,7 @@ function _hmHistoryRegister() {
         color: this._config.series[k].color,
         name: this._config.series[k].name || this._config.series[k].entity,
         value: vals[i],
+        faded: this._selected >= 0 && this._selected !== k,
       }));
 
       const lineH = 17;
@@ -705,6 +735,10 @@ function _hmHistoryRegister() {
         const y = boxY + 15 + (k + 1) * lineH;
         const v = row.value / div;
         const text = v.toFixed(dec);
+        // Keep the faded rows in the tooltip (the numbers stay comparable) but
+        // send them to the back visually.
+        const groupOp = row.faded ? " opacity=\"0.4\"" : "";
+        box += `<g${groupOp}>`;
         box += `<circle cx="${(boxX + 14).toFixed(1)}" cy="${(y - 4).toFixed(1)}" r="4"
             fill="${esc(row.color)}"/>`;
         box += `<text class="tiptext" x="${(boxX + 26).toFixed(1)}" y="${y.toFixed(1)}">${esc(
@@ -712,6 +746,7 @@ function _hmHistoryRegister() {
         )}</text>`;
         box += `<text class="tiptext" x="${(boxX + boxW - 10).toFixed(1)}" y="${y.toFixed(1)}"
             text-anchor="end" style="font-weight:600">${text}${esc(display.unit ? ` ${display.unit}` : "")}</text>`;
+        box += "</g>";
       });
 
       return `<line class="guide" x1="${x.toFixed(1)}" y1="${yTop}" x2="${x.toFixed(1)}"
@@ -719,6 +754,12 @@ function _hmHistoryRegister() {
     }
 
     /* ---------------------------- interaction ---------------------------- */
+
+    /** Select a series by legend index; `-1` clears the highlight. */
+    _selectSeries(index) {
+      this._selected = this._selected === index ? -1 : index;
+      this.requestUpdate();
+    }
 
     _setHover(index) {
       if (this._hover === index) return;
