@@ -17,7 +17,7 @@
  *   system_grid_power                      grid, positive=importing  [W]
  *   system_load_power                      house consumption         [W]
  *   battery_status                         standby|charge|discharge|lock
- *   rssi                                   Wi-Fi RSSI, dBm -> signal fan
+ *   rssi                                   Wi-Fi RSSI, dBm -> signal bars
  *
  * Card config:
  *   type: custom:hoymiles-power-flow
@@ -200,28 +200,15 @@ function _hmPowerFlowRegister() {
   }
 
   /**
-   * Annular sector ("fan segment") path.
-   *
-   * Angles are in degrees with -90 pointing up and 0 to the right, drawn in
-   * SVG screen coordinates (y grows downwards), so an increasing angle sweeps
-   * clockwise.
+   * Signal strength tiers, shared with the battery card so both cards draw the
+   * same icon for the same reading. Returns the number of lit bars (0..4).
    */
-  function annular(cx, cy, ri, ro, from, to) {
-    const at = (radius, angle) => {
-      const rad = (angle * Math.PI) / 180;
-      return [
-        (cx + radius * Math.cos(rad)).toFixed(2),
-        (cy + radius * Math.sin(rad)).toFixed(2),
-      ];
-    };
-    const [x0i, y0i] = at(ri, from);
-    const [x1i, y1i] = at(ri, to);
-    const [x0o, y0o] = at(ro, from);
-    const [x1o, y1o] = at(ro, to);
-    const large = Math.abs(to - from) > 180 ? 1 : 0;
-    return `M${x0i} ${y0i}L${x0o} ${y0o}`
-      + `A${ro} ${ro} 0 ${large} 1 ${x1o} ${y1o}`
-      + `L${x1i} ${y1i}A${ri} ${ri} 0 ${large} 0 ${x0i} ${y0i}Z`;
+  function rssiBars(rssi) {
+    if (rssi === null || !Number.isFinite(rssi)) return 0;
+    if (rssi >= -55) return 4;
+    if (rssi >= -65) return 3;
+    if (rssi >= -75) return 2;
+    return 1;
   }
 
   /* ------------------------------------------------------------------ *
@@ -264,7 +251,7 @@ function _hmPowerFlowRegister() {
         .signal { display: inline-flex; align-items: center; gap: 6px;
                   font-size: 13.5px; color: var(--secondary-text-color);
                   font-variant-numeric: tabular-nums; }
-        .signal .fan { display: block; width: 26px; height: 26px; flex: none; }
+        .signal .bars { display: block; width: 22px; height: 18px; flex: none; }
         .chip { display: inline-flex; align-items: center; gap: 6px;
                 font-size: 14px; color: var(--primary-text-color); }
         .wrap { display: flex; justify-content: center; }
@@ -507,55 +494,43 @@ function _hmPowerFlowRegister() {
     }
 
     /**
-     * RSSI shown in the top right corner: a fan of concentric segments plus
-     * the raw dBm reading.  Hidden when the device reports no signal value,
-     * and switchable off with ``show_rssi: false``.
+     * RSSI shown in the top right corner: the same four-bar Wi-Fi icon the
+     * battery card uses, plus the raw dBm reading.  Hidden when the device
+     * reports no signal value, and switchable off with ``show_rssi: false``.
      */
     _signal(d) {
       if (this._config.show_rssi === false) return null;
       const rssi = d.rssi;
       if (rssi === null || !Number.isFinite(rssi)) return null;
 
-      let bars = 1;
-      let color = "var(--hm-pf-weak, #ef4444)";
-      let quality = this._t("weak", "较弱");
-      if (rssi >= -55) {
-        bars = 4;
-        color = "var(--hm-pf-strong, #22c55e)";
-        quality = this._t("excellent", "优秀");
-      } else if (rssi >= -65) {
-        bars = 3;
-        color = "var(--hm-pf-strong, #22c55e)";
-        quality = this._t("good", "良好");
-      } else if (rssi >= -75) {
-        bars = 2;
-        color = "var(--hm-pf-fair, #f59e0b)";
-        quality = this._t("fair", "一般");
-      }
+      const bars = rssiBars(rssi);
+      const quality = bars === 4 ? this._t("excellent", "优秀")
+        : bars === 3 ? this._t("good", "良好")
+          : bars === 2 ? this._t("fair", "一般")
+            : this._t("weak", "较弱");
 
       return html`
         <div class="signal" title=${`${this._t("Wi-Fi signal", "Wi-Fi 信号")}: ${quality}`}>
-          ${this._untrusted(this._signalFan(bars, color))}
+          ${this._untrusted(this._signalBars(bars))}
           <span>${rssi.toFixed(0)} dBm</span>
         </div>`;
     }
 
     /**
-     * The fan itself: four annular sectors radiating from the bottom left
-     * corner. The innermost `bars` segments are lit, so a weak signal shows a
-     * small arc and a strong one fills the quarter circle.
+     * The icon: four bars of increasing height. Geometry and colours match
+     * ``hoymiles-battery``'s `_signal()` exactly, so the same reading looks
+     * identical on both cards.
      */
-    _signalFan(bars, color) {
-      const originY = 30;
-      const start = -88;
-      const span = 86;
-      let out = "<svg class=\"fan\" viewBox=\"0 0 32 32\" "
+    _signalBars(bars) {
+      const color = bars === 0
+        ? "var(--disabled-text-color, #b6bcc4)"
+        : "var(--primary-color)";
+      let out = "<svg class=\"bars\" width=\"22\" height=\"18\" viewBox=\"0 0 22 18\" "
         + "xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\">";
       for (let i = 0; i < 4; i += 1) {
-        const ri = 4 + i * 7;
-        const fill = i < bars ? color : "var(--divider-color, #dcdfe4)";
-        out += `<path d="${annular(0, originY, ri, ri + 5, start, start + span)}"`
-          + ` fill="${fill}"/>`;
+        const h = 4 + i * 3.4;
+        out += `<rect x="${1 + i * 5}" y="${16 - h}" width="3.4" height="${h}" rx="1.4"`
+          + ` fill="${i < bars ? color : "var(--divider-color, #dcdfe4)"}"/>`;
       }
       return `${out}</svg>`;
     }
