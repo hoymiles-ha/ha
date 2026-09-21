@@ -182,6 +182,7 @@ language: zh
 type: custom:hoymiles-power-flow
 dev_id: MSA-280520260806
 title: 我的家            # 可选，默认「我的家」
+show_title: false        # 可选，false 隐藏标题与设备 SN（只留右侧信号图标）
 language: zh             # 可选 en|zh
 temperature_entity: sensor.outdoor_temperature   # 可选，标题右侧显示温度
 show_rssi: true          # 可选，右上角信号扇形（默认 true）

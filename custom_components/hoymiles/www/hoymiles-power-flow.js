@@ -23,6 +23,7 @@
  *   type: custom:hoymiles-power-flow
  *   dev_id: MSA-280520260806      # required
  *   title: 我的家                # optional, defaults to the device id
+ *   show_title: true              # optional, false hides the title + device id
  *   language: zh                  # optional (en|zh)
  *   temperature_entity: sensor.x  # optional, shown next to the title
  *   gradient: true                # optional light backdrop (default true)
@@ -243,6 +244,7 @@ function _hmPowerFlowRegister() {
         ha-card { padding: 10px 12px 6px; overflow: hidden; }
         .head { display: flex; align-items: center; gap: 8px;
                 justify-content: space-between; margin: 2px 4px 4px; }
+        .head.bare { justify-content: flex-end; }
         .hname { font-size: 20px; font-weight: 600;
                  color: var(--primary-text-color); letter-spacing: 0.2px; }
         .hname .dev { font-size: 13px; font-weight: 400; opacity: 0.65;
@@ -316,7 +318,8 @@ function _hmPowerFlowRegister() {
       const d = this._data();
       return [
         this._config.language, this._config.gradient, this._config.max_width,
-        this._config.title, this._config.show_rssi, this._temperature(),
+        this._config.title, this._config.show_title, this._config.show_rssi,
+        this._temperature(),
         d.pv, d.battery, d.grid, d.load, d.soc, d.status, d.rssi,
       ].join("\u0001");
     }
@@ -454,14 +457,16 @@ function _hmPowerFlowRegister() {
       if (!this._config) return html``;
       const d = this._data();
       const temp = this._temperature();
+      const showName = this._showName();
 
       return html`
         <ha-card>
-          <div class="head">
-            <div class="hname">
-              ${this._t("My home", "我的家")}
-              <span class="dev">${esc(this._dev())}</span>
-            </div>
+          <div class="head ${showName ? "" : "bare"}">
+            ${showName ? html`
+              <div class="hname">
+                ${esc(this._config.title || this._t("My home", "我的家"))}
+                <span class="dev">${esc(this._dev())}</span>
+              </div>` : ""}
             <div class="hright">
               ${this._signal(d)}
               ${temp === null ? "" : html`
@@ -475,6 +480,13 @@ function _hmPowerFlowRegister() {
           </div>
         </ha-card>
       `;
+    }
+
+    /** The title block (heading + device id) can be hidden with `show_title`.
+     * ``title: false`` works too, so a single switch is enough in YAML.
+     */
+    _showName() {
+      return this._config.show_title !== false && this._config.title !== false;
     }
 
     _wrapStyle() {
@@ -684,10 +696,20 @@ function _hmPowerFlowRegister() {
       };
     }
 
+    _toggle(field) {
+      return (event) => {
+        const config = { ...(this._config || {}), [field]: event.target.checked };
+        this._config = config;
+        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config } }));
+      };
+    }
+
     static get styles() {
       return css`
         .row { padding: 8px; }
         ha-textfield { display: block; width: 100%; margin-bottom: 8px; }
+        .sw { display: flex; align-items: center; gap: 10px; padding: 6px 0;
+              font-size: 14px; color: var(--primary-text-color); }
       `;
     }
 
@@ -705,6 +727,16 @@ function _hmPowerFlowRegister() {
             @change=${this._changed("temperature_entity")}></ha-textfield>
           <ha-textfield label="max_width (px)" .value=${config.max_width || ""}
             @change=${this._changed("max_width")}></ha-textfield>
+          <label class="sw">
+            <ha-switch .checked=${config.show_title !== false}
+              @change=${this._toggle("show_title")}></ha-switch>
+            <span>show_title (标题与设备 SN)</span>
+          </label>
+          <label class="sw">
+            <ha-switch .checked=${config.show_rssi !== false}
+              @change=${this._toggle("show_rssi")}></ha-switch>
+            <span>show_rssi (信号图标)</span>
+          </label>
         </div>
       `;
     }
