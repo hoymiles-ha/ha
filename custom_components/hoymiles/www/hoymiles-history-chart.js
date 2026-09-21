@@ -11,8 +11,11 @@
  *     naturally on both sides of the axis;
  *   - the y axis is symmetric around 0 and auto-scales (W is promoted to kW
  *     once the range exceeds 1.5 kW, Wh to kWh ...);
- *   - hovering shows a guide line and the value of every series. *   - clicking a legend entry highlights that series and dims the others
- *     (clicking it again, or the chart, clears the highlight). *
+ *   - hovering shows a guide line and the value of every series, and the same
+ *     timestamp is mirrored on every card that shares a `sync_group`;
+ *   - clicking a legend entry highlights that series and dims the others
+ *     (clicking it again, or the chart, clears the highlight).
+ *
  * Data comes from the Home Assistant recorder (long term statistics) through
  * the public websocket command `recorder/statistics_during_period`. The card
  * never touches the database itself, and `recorder` has to be enabled.
@@ -172,6 +175,7 @@ function _hmHistoryRegister() {
         _error: { type: String },
         _hover: { type: Number },
         _selected: { type: Number },
+        _remoteTime: { type: Number },
       };
     }
 
@@ -186,6 +190,7 @@ function _hmHistoryRegister() {
       this._error = null;
       this._hover = -1;
       this._selected = -1;
+      this._remoteTime = null;
       this._token = 0;
       this._syncJoined = null;
     }
@@ -400,6 +405,7 @@ function _hmHistoryRegister() {
       // Adopt the window the group already has, so a late card does not show a
       // different period than the one next to it.
       if (group.state) this._applySync(group.state);
+      if (group.hover != null) this._applyRemoteHover(group.hover);
     }
 
     _leaveSync() {
@@ -436,7 +442,36 @@ function _hmHistoryRegister() {
       this._anchor = new Date(state.anchor);
       this._data = null;
       this._hover = -1;
+      this._remoteTime = null;
       if (this._config && this._hass) this._fetch();
+      this.requestUpdate();
+    }
+
+    /** Publish the hovered timestamp so the rest of the group can mirror it. */
+    _pushHover(index) {
+      const key = this._syncKey();
+      if (!key) return;
+      const group = SYNC_GROUPS.get(key);
+      if (!group) return;
+      const times = this._data && this._data.times;
+      const time = index >= 0 && times && times.length
+        ? num(times[Math.min(index, times.length - 1)])
+        : null;
+      // `mousemove` fires far more often than the bucket changes, so only a new
+      // timestamp is worth waking the other cards for.
+      if (group.hover === time) return;
+      group.hover = time;
+      for (const member of group.members) {
+        if (member !== this) member._applyRemoteHover(time);
+      }
+    }
+
+    /** Mirror another card's hover. Never pushes back. */
+    _applyRemoteHover(time) {
+      const next = time == null ? null : num(time);
+      if (this._remoteTime === next && (next != null || this._hover < 0)) return;
+      this._remoteTime = next;
+      if (next == null) this._hover = -1;
       this.requestUpdate();
     }
 
@@ -818,8 +853,12 @@ function _hmHistoryRegister() {
     }
 
     _hoverLayer(data, toX, yTop, yBot, div, axDecimals) {
-      if (this._hover < 0 || this._hover >= data.times.length) return "";
-      const i = this._hover;
+      // A hover can come from this card (bucket index) or from another card in
+      // the group (timestamp, which may sit on a different bucket grid), so the
+      // index is resolved to a fractional position instead of being assumed.
+      const pos = this._hoverPosition(data);
+      if (pos == null) return "";
+      const i = Math.min(Math.max(pos, 0), data.times.length - 1);
       const x = toX(i);
       const when = new Date(num(data.times[i]));
       const stamp = this._range === "day"
@@ -871,16 +910,64 @@ function _hmHistoryRegister() {
 
     /* ---------------------------- interaction ---------------------------- */
 
+    /**
+     * Where the guide line belongs, as a bucket index, or null when nothing is
+     * hovered.
+     *
+     * A remote hover is matched by timestamp with a binary search: statistic
+     * buckets are *not* evenly spaced (a device that was offline leaves a hole
+     * in the series), so an index cannot be derived from a linear scale.
+     */
+    _hoverPosition(data) {
+      const times = data.times;
+      const n = times.length;
+      if (!n) return null;
+      if (this._remoteTime == null) {
+        if (this._hover < 0 || this._hover >= n) return null;
+        return this._hover;
+      }
+
+      const target = num(this._remoteTime);
+      const first = num(times[0]);
+      const last = num(times[n - 1]);
+      const gap = n > 1 ? (last - first) / (n - 1) : Math.max(last - first, 1);
+      // Only reject a hover that belongs to a different window (e.g. the group
+      // has moved on). Inside the range the nearest bucket is always used, even
+      // when the hovered instant falls in one of this card's data gaps.
+      if (target < first - gap || target > last + gap) return null;
+
+      let lo = 0;
+      let hi = n - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (num(times[mid]) < target) lo = mid + 1;
+        else hi = mid;
+      }
+      if (lo > 0
+        && Math.abs(num(times[lo - 1]) - target) <= Math.abs(num(times[lo]) - target)) {
+        return lo - 1;
+      }
+      return lo;
+    }
+
     /** Select a series by legend index; `-1` clears the highlight. */
     _selectSeries(index) {
       this._selected = this._selected === index ? -1 : index;
       this.requestUpdate();
     }
 
-    _setHover(index) {
-      if (this._hover === index) return;
+    /**
+     * Track the pointer. `index` is this card's bucket; `-1` clears.
+     *
+     * The hover is broadcast as a timestamp, so the other cards in the group
+     * can place their own guide line even if their buckets are coarser.
+     */
+    _setHover(index, publish = true) {
+      const changed = this._hover !== index || this._remoteTime != null;
+      this._remoteTime = null;
       this._hover = index;
-      this.requestUpdate();
+      if (changed) this.requestUpdate();
+      if (publish) this._pushHover(index);
     }
 
     _onMove(event) {
