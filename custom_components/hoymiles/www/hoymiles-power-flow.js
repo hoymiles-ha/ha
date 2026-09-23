@@ -65,12 +65,14 @@
  *                                 # (a chip only shows when its reading is
  *                                 #  non-zero, so idle branches stay hidden)
  *   has_meter: auto               # optional: auto | true | false. `auto`
- *                                 # switches to meter mode as soon as
- *                                 # `sys_grid_p` reads non-zero and stays
- *                                 # there until no reading arrives for 30 s
- *                                 # (a meter at ~0 W looks exactly like no
- *                                 # meter, see `_hasMeter`); true/false pin
- *                                 # the layout.
+ *                                 # treats a non-zero `sys_grid_p` as proof
+ *                                 # that a meter exists and needs
+ *                                 # `meter_zero_samples` consecutive zeros
+ *                                 # before concluding there is none (a meter
+ *                                 # at ~0 W looks exactly like no meter, see
+ *                                 # `_hasMeter`); true/false pin the layout.
+ *   meter_zero_samples: 10        # optional, count; the readings arrive once
+ *                                 # per second, so the default means ~10 s
  * ========================================================================== */
 
 function _hmPowerFlowRegister() {
@@ -94,9 +96,11 @@ function _hmPowerFlowRegister() {
   const DOT_DUR_MIN = 0.8; // s, keeps the very short stubs readable
   const DOT_DUR_MAX = 6.0; // s
 
-  /* How long a non-zero meter reading keeps the card in meter mode, see
-     `_hasMeter()`. */
-  const METER_HOLD_MS = 30000;
+  /* How many consecutive zero `sys_grid_p` readings mean "no meter fitted".
+     Sampled once per second to mirror the 1 s `quick/state` push, so the
+     default of 10 is roughly ten seconds. */
+  const METER_ZERO_SAMPLES = 10;
+  const METER_SAMPLE_MS = 1000;
 
   const COLORS = {
     pv: "#f5a623",
@@ -376,8 +380,10 @@ function _hmPowerFlowRegister() {
       this._hass = null;
       this._config = null;
       this._cache = new Map();
-      // When a non-zero meter reading was last seen, see `_hasMeter()`.
-      this._meterSeenAt = null;
+      // Meter detection state, see `_hasMeter()`.
+      this._meterSamples = METER_ZERO_SAMPLES; // consecutive zero readings
+      this._meterState = false; // "no meter" until a reading proves otherwise
+      this._meterSampleAt = null; // when the last sample was taken
       // The verdict the current drawing was built with, so a layout change is
       // always re-rendered even when no other value moved.
       this._lastMeter = null;
@@ -467,8 +473,9 @@ function _hmPowerFlowRegister() {
      */
     shouldUpdate() {
       if (!this._config || !this._hass) return true;
-      /* The meter verdict is time based (see `_hasMeter`), so it can change
-         while every state value stays put - render on that change alone. */
+      /* The meter verdict is sampled once per second (see `_hasMeter`), so it
+         can change while every state value stays put - render on that change
+         alone. */
       const hasMeter = this._hasMeter(this._data());
       const meterChanged = hasMeter !== this._lastMeter;
       this._lastMeter = hasMeter;
@@ -483,7 +490,9 @@ function _hmPowerFlowRegister() {
       return [
         this._config.language, this._config.gradient, this._config.max_width,
         this._config.title, this._config.show_title, this._config.show_rssi,
-        this._config.show_extras, this._config.has_meter, this._temperature(),
+        this._config.show_extras, this._config.has_meter,
+        this._config.meter_zero_samples,
+        this._temperature(),
         d.pv, d.battery, d.grid, d.gridOn, d.load, d.soc, d.status, d.rssi,
         d.pv2, d.smartPlug,
       ].join("\u0001");
@@ -878,26 +887,67 @@ function _hmPowerFlowRegister() {
     /**
      * Is a grid meter installed?
      *
-     * The firmware has no "is there a meter" field in its MQTT payload: it
-     * simply reports 0 for `sys_grid_p` when no meter feeds it, so a non-zero
-     * reading means a meter is there.  0 W alone is ambiguous (a meter that is
-     * passing ~0 W looks identical), so a reading keeps the card in meter mode
-     * for `METER_HOLD_MS` afterwards: a live meter always produces another
-     * reading within that window, while an unplugged one never does again and
-     * the card falls back to the 电网&负载 layout.
+     * The firmware has no "is there a meter" field in its MQTT payload, so the
+     * reading has to speak for itself: a non-zero `sys_grid_p` is direct proof
+     * that something meters the grid (with no meter the counter behind it is
+     * never fed and the value is a hard 0).
      *
-     * `has_meter: true|false` pins the answer; a page reload also starts from
-     * the current reading instead of waiting out the window.
+     * 0 W on its own proves nothing, because with a meter fitted the EMS
+     * deliberately steers the grid towards zero exchange - a reading of ~0 W is
+     * a normal steady state there.  So the card only concludes "no meter" after
+     * `meter_zero_samples` consecutive zeros; any non-zero reading clears the
+     * run immediately.  Readings are sampled once a second to mirror the 1 s
+     * `quick/state` push, which is why the count doubles as a debounce for the
+     * momentary zeros a fitted meter produces.
+     *
+     * A freshly built card has no samples yet, and waiting ten seconds before
+     * the drawing is right would be worse than being wrong for a moment, so it
+     * starts on "no meter" and lets the first non-zero reading flip it.  The
+     * only case that shows the wrong layout in the meantime is a fitted meter
+     * holding exactly 0 W - which this rule would call "no meter" after ten
+     * samples anyway.
+     *
+     * `has_meter: true|false` pins the answer and skips the counting.
      */
     _hasMeter(d) {
       const forced = this._meterSetting();
-      if (forced !== null) return forced;
+      this._sampleMeter(d);
+      return forced !== null ? forced : this._meterState;
+    }
+
+    /**
+     * Take at most one meter sample per second and update the verdict.
+     *
+     * The gate matters: `_hasMeter` is called from `shouldUpdate`, `_signature`
+     * and the drawing itself, i.e. several times per `hass` push.  Without it
+     * the run would be counted several times per reading instead of once.
+     */
+    _sampleMeter(d) {
       const now = this._now();
-      if (Math.abs(num(d.grid)) >= MIN_FLOW) {
-        this._meterSeenAt = now;
-        return true;
+      if (this._meterSampleAt !== null
+        && (now - this._meterSampleAt) < METER_SAMPLE_MS) {
+        return;
       }
-      return this._meterSeenAt !== null && (now - this._meterSeenAt) < METER_HOLD_MS;
+      this._meterSampleAt = now;
+
+      if (Math.abs(num(d.grid)) >= MIN_FLOW) {
+        this._meterSamples = 0;
+        this._meterState = true;
+        return;
+      }
+      this._meterSamples += 1;
+      if (this._meterSamples >= this._meterZeroSamples()) {
+        this._meterState = false;
+      }
+    }
+
+    /** How many consecutive zeros mean "no meter" (configurable). */
+    _meterZeroSamples() {
+      const raw = this._config ? this._config.meter_zero_samples : undefined;
+      const count = Number(raw);
+      return raw === undefined || !Number.isFinite(count) || count < 1
+        ? METER_ZERO_SAMPLES
+        : Math.floor(count);
     }
 
     /** Wall clock in ms; overridable so the preview harness can fast forward. */
@@ -1030,6 +1080,9 @@ function _hmPowerFlowRegister() {
           <ha-textfield label="has_meter (auto|true|false)"
             .value=${config.has_meter === undefined ? "auto" : String(config.has_meter)}
             @change=${this._changed("has_meter")}></ha-textfield>
+          <ha-textfield label="meter_zero_samples (default 10)"
+            .value=${config.meter_zero_samples === undefined ? "" : String(config.meter_zero_samples)}
+            @change=${this._changed("meter_zero_samples")}></ha-textfield>
           <label class="sw">
             <ha-switch .checked=${config.show_title !== false}
               @change=${this._toggle("show_title")}></ha-switch>
