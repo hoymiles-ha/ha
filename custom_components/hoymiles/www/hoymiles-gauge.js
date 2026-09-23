@@ -126,10 +126,19 @@ function _hmGaugeRegister() {
 
     static get styles() {
       return css`
-        :host { display: block; }
-        ha-card { padding: 14px 16px 8px; }
+        /* The card fills whatever height its grid cell gives it, so it can be
+           stacked next to a taller neighbour without leaving a ragged bottom
+           edge.  In an auto-height container this resolves to the natural
+           height, i.e. nothing changes. */
+        :host { display: block; height: 100%; }
+        ha-card { padding: 14px 16px 8px; height: 100%; box-sizing: border-box;
+                  display: flex; flex-direction: column; }
         .head { display: flex; align-items: flex-start;
                 justify-content: space-between; gap: 10px; }
+        /* Takes the slack when the card is taller than its content: the readout
+           and the arch stay together, centred in the space that is left. */
+        .body { flex: 1 1 auto; min-height: 0;
+                display: flex; flex-direction: column; justify-content: center; }
         .name { font-size: 15px; font-weight: 500;
                 color: var(--primary-text-color); line-height: 1.3; }
         .icon { font-size: 19px; line-height: 1; flex: none; }
@@ -244,18 +253,21 @@ function _hmGaugeRegister() {
       const max = Math.max(this._max(), 1e-9);
       // A configured ratio wins over value/max: it is the number the arch is
       // asked to show, and a made-up `max` only ever produced a meaningless
-      // percentage.  A missing state still draws the empty arch: a bare "-" on a
-      // blank card reads like a broken card, an arc at 0 % does not.
+      // percentage.  When a ratio is configured but cannot be computed (an
+      // entity is briefly unknown after a restart, say) the arch shows "—"
+      // rather than falling back to that meaningless percentage; the readout
+      // above it keeps showing whatever it has.
+      const ratioWanted = !!this._config.percent_numerator;
       const ratio = this._ratio();
-      const hasValue = value != null || ratio != null;
+      const dialHasValue = ratioWanted ? ratio != null : value != null;
       const frac = ratio != null ? ratio
-        : (value == null ? 0 : clamp((value - min) / (max - min || 1), 0, 1));
+        : (dialHasValue && value != null ? clamp((value - min) / (max - min || 1), 0, 1) : 0);
       const shown = value == null ? "—" : group(value.toFixed(this._decimals()));
       const unit = this._unit();
       // `show_arc: false` drops the whole indicator: no arch, no percentage, no
       // empty space where they used to be.  Checked against `false` so an absent
       // option keeps the arch.
-      const dial = this._config.show_arc === false ? "" : this._arc(frac, hasValue);
+      const dial = this._config.show_arc === false ? "" : this._arc(frac, dialHasValue);
 
       return html`
         <ha-card>
@@ -263,11 +275,13 @@ function _hmGaugeRegister() {
             <div class="name">${esc(name)}</div>
             ${icon === "" ? "" : html`<div class="icon">${esc(icon)}</div>`}
           </div>
-          <div class="readout">
-            <span class="value">${shown}</span>
-            ${unit === "" || value == null ? "" : html`<span class="unit">${esc(unit)}</span>`}
+          <div class="body">
+            <div class="readout">
+              <span class="value">${shown}</span>
+              ${unit === "" || value == null ? "" : html`<span class="unit">${esc(unit)}</span>`}
+            </div>
+            ${dial === "" ? "" : html`<div class="dial">${this._untrusted(dial)}</div>`}
           </div>
-          ${dial === "" ? "" : html`<div class="dial">${this._untrusted(dial)}</div>`}
         </ha-card>
       `;
     }
