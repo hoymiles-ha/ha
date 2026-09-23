@@ -241,13 +241,16 @@ max_width: 620           # 可选，插图最大宽度
 ```yaml
 type: custom:hoymiles-battery
 dev_id: MSA-280520260806
-title: HiBattery X        # 可选
+title: HiBattery 4020 X   # 可选，默认自动读设备型号
+show_title: false         # 可选，false 隐藏标题
 language: zh              # 可选 en|zh
 show_history: true        # 可选，默认 true（需启用 recorder）
 max_width: 560            # 可选，插图最大宽度
 alarm_entity: binary_sensor.x   # 可选，为 on 时标题左侧显示铃铛
 ```
 
+- **标题默认取设备注册表里的型号**（本机实测为 `HiBattery 4020 X`，来源于固件 MQTT
+discovery 的 `device.model`），所以换机型不用改卡片配置；显式写 `title` 则覆盖它。
 - 电池数量优先取 `pack_count`（`device/state` 的 `pack_num`），缺失时按实际能读到
   SOC 的 `pack1_soc`…`pack4_soc` 推断，上限 4（与固件 `packs` 截断一致）。
 - 逐包数据用 `pack<i>_soc` / `pack<i>_temperature`；四周功率用 `pv_power`、

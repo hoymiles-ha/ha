@@ -20,7 +20,8 @@
  * Card config:
  *   type: custom:hoymiles-battery
  *   dev_id: MSA-280520260806     # required
- *   title: HiBattery X           # optional
+ *   title: HiBattery X           # optional, overrides the detected model
+ *   show_title: false            # optional, hide the header title
  *   language: zh                 # optional (en|zh)
  *   show_history: true           # optional (default true)
  *   max_width: 560               # optional px for the illustration
@@ -347,7 +348,10 @@ function _hmBatteryRegister() {
       }
       return [
         this._config.language, this._config.max_width, this._config.title,
-        this._config.alarm_entity, this._range,
+        this._config.show_title, this._config.alarm_entity, this._range,
+        // The model arrives with the device registry, which can load after the
+        // first render, so it has to be part of what triggers a rebuild.
+        this._title(),
         this._read("rssi", null), this._alarmOn(),
         this._read("pv_power", 0), this._read("grid_on_power", 0),
         this._read("grid_off_power", 0),
@@ -373,6 +377,61 @@ function _hmBatteryRegister() {
 
     _dev() {
       return this._config.dev_id;
+    }
+
+    /**
+     * The device the card is looking at, from the device registry.
+     *
+     * `dev_id` is the integration/DNS identifier the firmware publishes, which
+     * is exactly what the device's `identifiers` carry, so no entity lookup is
+     * needed.  A device may be registered more than once (the MQTT discovery
+     * device and the integration's own), and only some of those entries know
+     * the model, so prefer whichever one has it.
+     */
+    _device() {
+      const hass = this._hass;
+      if (!hass || !hass.devices) return null;
+      const wanted = String(this._dev() || "").toLowerCase();
+      if (!wanted) return null;
+
+      let fallback = null;
+      for (const device of Object.values(hass.devices)) {
+        if (!device) continue;
+        const hit = (device.identifiers || []).some(
+          (pair) => pair && String(pair[1] || "").toLowerCase() === wanted);
+        if (!hit) continue;
+        if (device.model) return device;
+        if (!fallback) fallback = device;
+      }
+      if (fallback) return fallback;
+
+      // No identifier matched (renamed by hand, unusual setup): fall back to
+      // the device one of our own entities belongs to.
+      const entityId = this._resolveEntity("soc") || this._resolveEntity("bat_power");
+      const entry = entityId && hass.entities ? hass.entities[entityId] : null;
+      return entry && entry.device_id ? (hass.devices[entry.device_id] || null) : null;
+    }
+
+    /** Model as reported by the device ("HiBattery 4020 X"), or null. */
+    _model() {
+      const device = this._device();
+      return device && device.model ? String(device.model) : null;
+    }
+
+    /**
+     * Header title: explicit config wins, then what the device says it is, and
+     * only then a generic placeholder — a hard-coded name goes stale as soon as
+     * the hardware changes.
+     */
+    _title() {
+      const configured = this._config && this._config.title;
+      if (typeof configured === "string" && configured) return configured;
+      return this._model() || "HiBattery X";
+    }
+
+    _showTitle() {
+      const config = this._config || {};
+      return config.show_title !== false && config.title !== false;
     }
 
     _resolveEntity(suffix, domain = "sensor") {
@@ -501,7 +560,9 @@ function _hmBatteryRegister() {
         <ha-card>
           <div class="head">
             <div class="hstat">${this._alarm()}</div>
-            <div class="htitle">${esc(this._config.title || "HiBattery X")}</div>
+            ${this._showTitle()
+              ? html`<div class="htitle">${esc(this._title())}</div>`
+              : html`<div class="htitle"></div>`}
             <div class="hstat">${this._untrusted(this._signal())}</div>
           </div>
           <div class="wrap" style=${this._wrapStyle()}>
@@ -821,8 +882,11 @@ function _hmBatteryRegister() {
         <div class="row">
           <ha-textfield label="dev_id (required)" .value=${config.dev_id || ""}
             @change=${this._changed("dev_id")}></ha-textfield>
-          <ha-textfield label="title" .value=${config.title || ""}
+          <ha-textfield label="title (默认用设备型号)" .value=${config.title || ""}
             @change=${this._changed("title")}></ha-textfield>
+          <ha-textfield label="show_title (false = 隐藏标题)"
+            .value=${config.show_title === false ? "false" : ""}
+            @change=${this._changed("show_title")}></ha-textfield>
           <ha-textfield label="language (en|zh)" .value=${config.language || "zh"}
             @change=${this._changed("language")}></ha-textfield>
           <ha-textfield label="max_width (px)" .value=${config.max_width || ""}
