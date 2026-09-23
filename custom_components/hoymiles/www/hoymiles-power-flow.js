@@ -40,6 +40,8 @@
  *     smart_plug: sensor.my_system_smart_plug_power
  *   show_rssi: true               # optional, hide the fan with false
  *   show_extras: true             # optional, hide the PV2 / smart plug chips
+ *                                 # (a chip only shows when its reading is
+ *                                 #  non-zero, so idle branches stay hidden)
  * ========================================================================== */
 
 function _hmPowerFlowRegister() {
@@ -654,14 +656,24 @@ function _hmPowerFlowRegister() {
           </g>`;
       };
 
+      /* A branch only gets a chip when the unit actually reports it and the
+         reading is not zero: at zero there is nothing flowing on that branch,
+         so the illustration stays clean. */
+      const live = (v) => v !== null && v !== undefined && !Number.isNaN(v) && v !== 0;
+
       const extras = [];
       if (this._config.show_extras !== false) {
-        if (d.pv2 !== null) {
-          extras.push(chip(40, 34, this._t("PV2", "光伏2"), fmtW(d.pv2), COLORS.pv6));
+        const chips = [];
+        if (live(d.pv2)) {
+          chips.push([this._t("PV2", "光伏2"), fmtW(d.pv2), COLORS.pv6]);
         }
-        if (d.smartPlug !== null) {
-          extras.push(chip(40, 66, this._t("Smart plug", "智能插座"), fmtW(d.smartPlug), COLORS.sp));
+        if (live(d.smartPlug)) {
+          chips.push([this._t("Smart plug", "智能插座"), fmtW(d.smartPlug), COLORS.sp]);
         }
+        /* Stack them from the top down so that hiding one closes the gap. */
+        chips.forEach(([name, value, color], i) => {
+          extras.push(chip(40, 34 + i * 32, name, value, color));
+        });
       }
 
       return `<svg viewBox="0 0 ${VB_W} ${VB_H}" preserveAspectRatio="xMidYMid meet"
