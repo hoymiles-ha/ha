@@ -742,22 +742,21 @@ function _hmHistoryRegister() {
         : x0 + (x1 - x0) * (i / (times.length - 1)));
 
       let grid = "";
-      for (const t of ticks) {
+      ticks.forEach((t, index) => {
         const y = toY(t).toFixed(1);
         if (t !== 0) {
           grid += `<line class="grid" x1="${x0}" y1="${y}" x2="${x1}" y2="${y}"/>`;
         }
         const label = t / div;
+        /* The unit rides on the topmost tick ("2.50 W"). It used to be a hint
+           of its own in the same corner, which put it on top of this very
+           label. */
+        const unit = index === 0 && display.unit ? ` ${display.unit}` : "";
         grid += `<text class="axis" x="${x0 - 8}" y="${(toY(t) + 4).toFixed(1)}"
-          text-anchor="end">${label.toFixed(axDecimals)}</text>`;
-      }
+          text-anchor="end">${label.toFixed(axDecimals)}${esc(unit)}</text>`;
+      });
       if (this._config.zero_line !== false && symmetric) {
         grid += `<line class="zero" x1="${x0}" y1="${yZero.toFixed(1)}" x2="${x1}" y2="${yZero.toFixed(1)}"/>`;
-      }
-      // unit hint in the top-left corner, like the vendor app ("2 kW")
-      if (display.unit) {
-        grid += `<text class="axis" x="${x0 - 8}" y="${(yTop + 2).toFixed(1)}"
-          text-anchor="end" style="font-size:10.5px">${esc(display.unit)}</text>`;
       }
 
       // areas + top strokes. A selected series keeps full weight, the others
