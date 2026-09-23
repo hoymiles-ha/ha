@@ -11,7 +11,7 @@
  *   * a grid meter is installed (`sys_grid_p` is non-zero) -> four nodes: the
  *     grid node shows the meter reading with a 电网输入/电网输出 pill and the
  *     house load gets its own callout in the top right corner;
- *   * there is no meter (`sys_grid_p` stays 0, the firmware has no way to tell
+ *   * there is no meter (`sys_grid_p` reads 0, the firmware has no way to tell
  *     the grid from the house) -> the load callout and its connector are
  *     dropped and the bottom right node becomes 「电网&负载」, showing the
  *     device level on-grid port power (`grid_on_p`) instead.
@@ -65,10 +65,11 @@
  *                                 #  non-zero, so idle branches stay hidden)
  *   has_meter: auto               # optional: auto | true | false. `auto`
  *                                 # switches to meter mode as soon as
- *                                 # `sys_grid_p` reads non-zero (and keeps it,
- *                                 # so a meter that happens to read 0 W does
- *                                 # not flip the layout back and forth);
- *                                 # true/false pin the layout.
+ *                                 # `sys_grid_p` reads non-zero and stays
+ *                                 # there until no reading arrives for 30 s
+ *                                 # (a meter at ~0 W looks exactly like no
+ *                                 # meter, see `_hasMeter`); true/false pin
+ *                                 # the layout.
  * ========================================================================== */
 
 function _hmPowerFlowRegister() {
@@ -91,6 +92,10 @@ function _hmPowerFlowRegister() {
   const DOT_SPEED_MAX = 230; // px per second at full power
   const DOT_DUR_MIN = 0.8; // s, keeps the very short stubs readable
   const DOT_DUR_MAX = 6.0; // s
+
+  /* How long a non-zero meter reading keeps the card in meter mode, see
+     `_hasMeter()`. */
+  const METER_HOLD_MS = 30000;
 
   const COLORS = {
     pv: "#f5a623",
@@ -370,8 +375,11 @@ function _hmPowerFlowRegister() {
       this._hass = null;
       this._config = null;
       this._cache = new Map();
-      // Sticky "a meter was seen" flag, see `_hasMeter()`.
-      this._meterSeen = false;
+      // When a non-zero meter reading was last seen, see `_hasMeter()`.
+      this._meterSeenAt = null;
+      // The verdict the current drawing was built with, so a layout change is
+      // always re-rendered even when no other value moved.
+      this._lastMeter = null;
     }
 
     static getConfigElement() {
@@ -458,8 +466,13 @@ function _hmPowerFlowRegister() {
      */
     shouldUpdate() {
       if (!this._config || !this._hass) return true;
+      /* The meter verdict is time based (see `_hasMeter`), so it can change
+         while every state value stays put - render on that change alone. */
+      const hasMeter = this._hasMeter(this._data());
+      const meterChanged = hasMeter !== this._lastMeter;
+      this._lastMeter = hasMeter;
       const signature = this._signature();
-      if (signature === this._signatureCache) return false;
+      if (!meterChanged && signature === this._signatureCache) return false;
       this._signatureCache = signature;
       return true;
     }
@@ -470,7 +483,6 @@ function _hmPowerFlowRegister() {
         this._config.language, this._config.gradient, this._config.max_width,
         this._config.title, this._config.show_title, this._config.show_rssi,
         this._config.show_extras, this._config.has_meter, this._temperature(),
-        this._hasMeter(d),
         d.pv, d.battery, d.grid, d.gridOn, d.load, d.soc, d.status, d.rssi,
         d.pv2, d.smartPlug,
       ].join("\u0001");
@@ -865,16 +877,31 @@ function _hmPowerFlowRegister() {
     /**
      * Is a grid meter installed?
      *
-     * The firmware only fills `sys_grid_p` from a real meter, so a non-zero
-     * reading is the signal that one exists.  The answer is latched: with a
-     * meter connected the power does pass through 0 W now and then, and the
-     * layout must not flip to the three node version for that moment.
+     * The firmware has no "is there a meter" field in its MQTT payload: it
+     * simply reports 0 for `sys_grid_p` when no meter feeds it, so a non-zero
+     * reading means a meter is there.  0 W alone is ambiguous (a meter that is
+     * passing ~0 W looks identical), so a reading keeps the card in meter mode
+     * for `METER_HOLD_MS` afterwards: a live meter always produces another
+     * reading within that window, while an unplugged one never does again and
+     * the card falls back to the 电网&负载 layout.
+     *
+     * `has_meter: true|false` pins the answer; a page reload also starts from
+     * the current reading instead of waiting out the window.
      */
     _hasMeter(d) {
       const forced = this._meterSetting();
       if (forced !== null) return forced;
-      if (Math.abs(num(d.grid)) >= MIN_FLOW) this._meterSeen = true;
-      return this._meterSeen;
+      const now = this._now();
+      if (Math.abs(num(d.grid)) >= MIN_FLOW) {
+        this._meterSeenAt = now;
+        return true;
+      }
+      return this._meterSeenAt !== null && (now - this._meterSeenAt) < METER_HOLD_MS;
+    }
+
+    /** Wall clock in ms; overridable so the preview harness can fast forward. */
+    _now() {
+      return Date.now();
     }
 
     /**
