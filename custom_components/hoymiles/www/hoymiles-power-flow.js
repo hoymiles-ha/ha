@@ -7,15 +7,34 @@
  * Hoymiles micro storage device — 光伏 (PV), 微储 (battery), 电网 (grid) and
  * 负载 (house load) — exactly like the vendor app's home screen.
  *
+ * The bottom row mirrors the two layouts of the vendor app:
+ *   * a grid meter is installed (`sys_grid_p` is non-zero) -> four nodes: the
+ *     grid node shows the meter reading with a 电网输入/电网输出 pill and the
+ *     house load gets its own callout in the top right corner;
+ *   * there is no meter (`sys_grid_p` stays 0, the firmware has no way to tell
+ *     the grid from the house) -> the load callout and its connector are
+ *     dropped and the bottom right node becomes 「电网&负载」, showing the
+ *     device level on-grid port power (`grid_on_p`) instead.
+ *
+ * The bottom right node only ever wears one of the two live direction pills
+ * (电网输入 / 电网输出); a node that carries no power gets no pill at all.
+ *
+ * Note the two readings use opposite sign conventions: with a meter
+ * `sys_grid_p` is positive while importing, while the device level `grid_on_p`
+ * is negative (the firmware treats "power flowing into the unit" as
+ * negative). The card normalises both to "am I importing?" before drawing.
+ *
  * Everything is hand-rolled SVG (no chart library, no CDN), so the card keeps
  * working offline on a Raspberry Pi.
  *
  * Data sources (plain entity states, no recorder required):
- *   system_pv_power (+ system_pv2_power)   PV production            [W]
- *   system_battery_power                   battery, negative=charge  [W]
- *   system_soc                             battery state of charge   [%]
- *   system_grid_power                      grid, positive=importing  [W]
- *   system_load_power                      house consumption         [W]
+ *   system_pv_power (sys_pv_p)             PV1 production           [W]
+ *   system_pv2_power (sys_pv2_p)           PV2 production           [W]
+ *   system_battery_power                   battery, negative=charge [W]
+ *   system_soc                             battery state of charge  [%]
+ *   system_grid_power (sys_grid_p)         grid (meter), + = import [W]
+ *   grid_on_power (grid_on_p)              on-grid port, - = import  [W]
+ *   system_load_power                      house consumption        [W]
  *   battery_status                         standby|charge|discharge|lock
  *   rssi                                   Wi-Fi RSSI, dBm -> signal bars
  *
@@ -28,20 +47,28 @@
  *   temperature_entity: sensor.x  # optional, shown next to the title
  *   gradient: true                # optional light backdrop (default true)
  *   max_width: 620                # optional px, the drawing stays centered
- *   entities:                     # optional entity id overrides
- *     pv: sensor.my_pv_power
- *     battery: sensor.my_battery_power
- *     grid: sensor.my_grid_power
- *     load: sensor.my_load_power
+ *   entities:                     # optional entity id overrides, keyed by the
+ *                                 # suffix the card looks up
+ *     system_pv_power: sensor.my_pv_power
+ *     system_battery_power: sensor.my_battery_power
+ *     system_grid_power: sensor.my_grid_power
+ *     grid_on_power: sensor.my_grid_on_power
+ *     system_load_power: sensor.my_load_power
  *     soc: sensor.my_soc
  *     battery_status: sensor.my_battery_status
  *     rssi: sensor.my_rssi
- *     pv2: sensor.my_system_pv2_power
- *     smart_plug: sensor.my_system_smart_plug_power
+ *     system_pv2_power: sensor.my_system_pv2_power
+ *     system_smart_plug_power: sensor.my_system_smart_plug_power
  *   show_rssi: true               # optional, hide the fan with false
  *   show_extras: true             # optional, hide the PV2 / smart plug chips
  *                                 # (a chip only shows when its reading is
  *                                 #  non-zero, so idle branches stay hidden)
+ *   has_meter: auto               # optional: auto | true | false. `auto`
+ *                                 # switches to meter mode as soon as
+ *                                 # `sys_grid_p` reads non-zero (and keeps it,
+ *                                 # so a meter that happens to read 0 W does
+ *                                 # not flip the layout back and forth);
+ *                                 # true/false pin the layout.
  * ========================================================================== */
 
 function _hmPowerFlowRegister() {
@@ -56,7 +83,14 @@ function _hmPowerFlowRegister() {
   const VB_W = 700;
   const VB_H = 470;
   const MIN_FLOW = 5; // W; below this a branch is drawn as idle
-  const LINE_END_Y = 376; // where the vertical connector lines stop
+
+  /* Speed of the moving pearls. The travel time is derived from the connector
+     length, so a short stub and a long line no longer look like different
+     animals. */
+  const DOT_SPEED_MIN = 40; // px per second at ~0 W
+  const DOT_SPEED_MAX = 230; // px per second at full power
+  const DOT_DUR_MIN = 0.8; // s, keeps the very short stubs readable
+  const DOT_DUR_MAX = 6.0; // s
 
   const COLORS = {
     pv: "#f5a623",
@@ -160,6 +194,107 @@ function _hmPowerFlowRegister() {
     </g>`;
   }
 
+  /**
+   * Length of one of our connectors. Every route below is a plain orthogonal
+   * 「M / H / V」polyline, so a three line parser is enough to measure it.
+   */
+  function pathLength(d) {
+    const steps = String(d).match(/[MHV][^MHV]*/gi) || [];
+    let x = 0;
+    let y = 0;
+    let len = 0;
+    for (const step of steps) {
+      const cmd = step[0].toUpperCase();
+      const args = (step.slice(1).match(/-?\d*\.?\d+/g) || []).map(Number);
+      if (cmd === "M" || cmd === "L") {
+        for (let i = 0; i + 1 < args.length; i += 2) {
+          if (i > 0 || cmd === "L") len += Math.hypot(args[i] - x, args[i + 1] - y);
+          [x, y] = [args[i], args[i + 1]];
+        }
+      } else if (cmd === "H") {
+        for (const v of args) { len += Math.abs(v - x); x = v; }
+      } else if (cmd === "V") {
+        for (const v of args) { len += Math.abs(v - y); y = v; }
+      }
+    }
+    return len;
+  }
+
+  /**
+   * Reversed copy of a 「M / H / V」polyline, so a flow can run the other way
+   * (charging into the battery, importing from the grid) without moving the
+   * drawing:  "M236 182 H105 V376" -> "M105 376 V182 H236".
+   *
+   * Done here instead of with SMIL `keyPoints` because keyPoints support is
+   * uneven across browsers.
+   */
+  function reversePath(d) {
+    const steps = String(d).match(/[MHV][^MHV]*/gi) || [];
+    const pts = [];
+    let x = 0;
+    let y = 0;
+    for (const step of steps) {
+      const cmd = step[0].toUpperCase();
+      const args = (step.slice(1).match(/-?\d*\.?\d+/g) || []).map(Number);
+      if (cmd === "M" || cmd === "L") {
+        for (let i = 0; i + 1 < args.length; i += 2) { [x, y] = [args[i], args[i + 1]]; pts.push([x, y]); }
+      } else if (cmd === "H") {
+        for (const v of args) { x = v; pts.push([x, y]); }
+      } else if (cmd === "V") {
+        for (const v of args) { y = v; pts.push([x, y]); }
+      }
+    }
+    if (!pts.length) return String(d);
+    const back = pts.slice().reverse();
+    let out = `M${back[0][0]} ${back[0][1]}`;
+    for (let i = 1; i < back.length; i += 1) {
+      const [px, py] = back[i - 1];
+      const [cx, cy] = back[i];
+      out += cx === px ? ` V${cy}` : ` H${cx}`;
+    }
+    return out;
+  }
+
+  /**
+   * The moving pearls that show how much power flows along one connector:
+   *
+   *  * travel time follows the connector length, so equal power moves at an
+   *    equal speed everywhere (the old fixed duration made the 18 px battery
+   *    stub crawl while the 325 px PV line raced);
+   *  * the flow can be reversed (`reverse`) so charge/import runs the other
+   *    way round;
+   *  * each pearl fades in and out at the ends instead of popping into place;
+   *  * longer connectors carry two pearls, half a period apart, which reads as
+   *    one continuous flow instead of a lone dot every few seconds.
+   */
+  function flowPearls(route) {
+    const power = Math.abs(num(route.power));
+    if (power < MIN_FLOW) return "";
+
+    const len = pathLength(route.d);
+    const speed = clamp(DOT_SPEED_MIN + power * 0.25, DOT_SPEED_MIN, DOT_SPEED_MAX);
+    const dur = clamp(len / speed, DOT_DUR_MIN, DOT_DUR_MAX);
+    const path = route.reverse ? reversePath(route.d) : route.d;
+    const count = len > 110 ? 2 : 1;
+    const fade = len > 70; // a stub would spend most of its cycle invisible
+
+    let out = "";
+    for (let i = 0; i < count; i += 1) {
+      const begin = i === 0 ? 0 : -dur / 2;
+      out += `
+      <g class="pf-pearl">
+        <animateMotion dur="${dur.toFixed(2)}s" repeatCount="indefinite"
+                       path="${path}" begin="${begin.toFixed(2)}s"/>${fade ? `
+        <animate attributeName="opacity" dur="${dur.toFixed(2)}s"
+                 repeatCount="indefinite" begin="${begin.toFixed(2)}s"
+                 values="0;1;1;0" keyTimes="0;0.12;0.85;1"/>` : ""}
+        <circle class="pf-glow" r="6.8" fill="${route.color}"/>
+        <circle class="pf-dot" r="3.2" fill="${route.color}"/>
+      </g>`;
+    }
+    return out;
+  }
+
   /* ------------------------------------------------------------------ *
    * Tiny helpers (kept local, the card is standalone)
    * ------------------------------------------------------------------ */
@@ -235,6 +370,8 @@ function _hmPowerFlowRegister() {
       this._hass = null;
       this._config = null;
       this._cache = new Map();
+      // Sticky "a meter was seen" flag, see `_hasMeter()`.
+      this._meterSeen = false;
     }
 
     static getConfigElement() {
@@ -272,7 +409,9 @@ function _hmPowerFlowRegister() {
         .pf-line { fill: none; stroke: var(--hm-pf-line, #ffffff);
                    stroke-width: 2.6; stroke-linecap: round;
                    stroke-linejoin: round; }
-        .pf-dot { stroke: #fff; stroke-width: 1.2; }
+        .pf-pearl { opacity: 0.95; }
+        .pf-glow { opacity: 0.2; }
+        .pf-dot { stroke: #fff; stroke-width: 1.15; }
 
         .pf-v { font-size: 26px; font-weight: 600;
                 fill: var(--primary-text-color); letter-spacing: 0.2px; }
@@ -330,8 +469,9 @@ function _hmPowerFlowRegister() {
       return [
         this._config.language, this._config.gradient, this._config.max_width,
         this._config.title, this._config.show_title, this._config.show_rssi,
-        this._config.show_extras, this._temperature(),
-        d.pv, d.battery, d.grid, d.load, d.soc, d.status, d.rssi,
+        this._config.show_extras, this._config.has_meter, this._temperature(),
+        this._hasMeter(d),
+        d.pv, d.battery, d.grid, d.gridOn, d.load, d.soc, d.status, d.rssi,
         d.pv2, d.smartPlug,
       ].join("\u0001");
     }
@@ -435,10 +575,16 @@ function _hmPowerFlowRegister() {
         pv = this._read("pv_power", 0);
       }
 
-      let grid = this._read("system_grid_power", 0);
-      if (!this._resolveEntity("system_grid_power")) {
-        grid = this._read("grid_on_power", 0);
-      }
+      // System level grid power. Only a real meter fills `sys_grid_p`, so a
+      // non-zero reading is what tells the card a meter is installed.
+      const grid = this._read("system_grid_power", 0);
+
+      // Device level on-grid port power (`grid_on_p`). Without a meter the
+      // firmware cannot split the grid from the house, so this single reading
+      // is what the app shows as 「电网&负载」.
+      const gridOn = this._resolveEntity("grid_on_power")
+        ? this._read("grid_on_power", 0)
+        : grid;
 
       let load = this._read("system_load_power", 0);
       if (!this._resolveEntity("system_load_power")) {
@@ -468,7 +614,7 @@ function _hmPowerFlowRegister() {
       const smartPlug = this._read("system_smart_plug_power", null);
 
       return {
-        pv, battery, grid, load, soc, status: status.toLowerCase(), rssi, pv2, smartPlug,
+        pv, battery, grid, gridOn, load, soc, status: status.toLowerCase(), rssi, pv2, smartPlug,
       };
     }
 
@@ -579,16 +725,26 @@ function _hmPowerFlowRegister() {
               : COLORS.battery_idle,
       );
 
+      const hasMeter = this._hasMeter(d);
+      const node = this._gridNode(d, hasMeter);
+
+      /* The four connectors. `d` always runs from the source-ish end to the
+         label end; `reverse` (set by `flowPearls`) flips the moving pearls
+         when the power actually goes the other way. */
       const routes = [
         { id: "pv", d: "M236 182 H105 V376", power: d.pv,
           color: COLORS.pv },
         { id: "battery", d: "M294 358 V376", power: d.battery,
-          color: COLORS.battery },
-        { id: "grid", d: "M512 316 H648 V376", power: d.grid,
-          color: d.grid >= 0 ? COLORS.grid : COLORS.grid_out },
-        { id: "load", d: "M480 152 H612 V96", power: d.load,
-          color: COLORS.load },
+          color: COLORS.battery, reverse: d.battery < 0 },
+        { id: "grid", d: "M512 316 H648 V376", power: node.power,
+          color: node.color, reverse: node.reverse },
       ];
+      /* The load callout only exists when the grid is metered: without a meter
+         `sys_load_p` is already shown by the 电网&负载 node. */
+      if (hasMeter) {
+        routes.push({ id: "load", d: "M480 152 H612 V96", power: d.load,
+          color: COLORS.load });
+      }
 
       // Every route is drawn twice: a soft grey halo first, then a white line
       // on top. That is what makes the thin connectors readable on the light
@@ -600,13 +756,7 @@ function _hmPowerFlowRegister() {
         <path class="pf-line" d="${r.d}" fill="none"
               vector-effect="non-scaling-stroke"/>`).join("");
 
-      const dots = routes.filter((r) => Math.abs(r.power) >= MIN_FLOW).map((r) => {
-        const dur = clamp(6 - Math.abs(r.power) / 600, 1.2, 4.5).toFixed(2);
-        return `
-        <circle class="pf-dot" r="3.6" fill="${r.color}">
-          <animateMotion dur="${dur}s" repeatCount="indefinite" path="${r.d}"/>
-        </circle>`;
-      }).join("");
+      const dots = routes.map(flowPearls).join("");
 
       const pill = (x, y, text, cls) => {
         if (!text) return "";
@@ -630,7 +780,6 @@ function _hmPowerFlowRegister() {
           <text class="pf-c" x="${x}" y="${y + 22}" text-anchor="middle">${esc(caption)}</text>`;
       };
 
-      const gridPill = this._gridPill(d.grid);
       const showSoc = d.soc !== null && !Number.isNaN(d.soc);
 
       /**
@@ -692,14 +841,78 @@ function _hmPowerFlowRegister() {
         ${halos}
         ${lines}
         ${dots}
-        ${label(105, 428, fmtW(d.pv), this._t("PV", "光伏"))}
+        ${label(105, 428, fmtW(d.pv), this._t("PV1", "光伏1"))}
         ${label(294, 428, fmtW(d.battery), this._t("Storage", "微储"),
           { pill: status.text, pillClass: status.cls, soc: showSoc ? d.soc : null })}
-        ${label(648, 428, fmtW(d.grid), this._t("Grid", "电网"),
-          { pill: gridPill.text, pillClass: gridPill.cls })}
-        ${label(612, 52, fmtW(d.load), this._t("Load", "负载"))}
+        ${label(648, 428, node.value, node.caption,
+          { pill: node.pill ? node.pill.text : "", pillClass: node.pill ? node.pill.cls : "" })}
+        ${hasMeter ? label(612, 52, fmtW(d.load), this._t("Load", "负载")) : ""}
         ${extras.join("")}
       </svg>`;
+    }
+
+    /**
+     * Normalised `has_meter` setting: true / false / null (auto).  Accepts the
+     * booleans and their YAML string forms.
+     */
+    _meterSetting() {
+      const raw = this._config ? this._config.has_meter : undefined;
+      if (raw === true || raw === "true") return true;
+      if (raw === false || raw === "false") return false;
+      return null;
+    }
+
+    /**
+     * Is a grid meter installed?
+     *
+     * The firmware only fills `sys_grid_p` from a real meter, so a non-zero
+     * reading is the signal that one exists.  The answer is latched: with a
+     * meter connected the power does pass through 0 W now and then, and the
+     * layout must not flip to the three node version for that moment.
+     */
+    _hasMeter(d) {
+      const forced = this._meterSetting();
+      if (forced !== null) return forced;
+      if (Math.abs(num(d.grid)) >= MIN_FLOW) this._meterSeen = true;
+      return this._meterSeen;
+    }
+
+    /**
+     * Bottom right node of the diagram.
+     *
+     * With a meter it is the grid: `sys_grid_p` (`> 0` = drawing from the grid,
+     * `< 0` = feeding back).  Without one the firmware has no way to tell the
+     * grid from the house, so the node becomes 「电网&负载」 and shows the device
+     * level on-grid port power `grid_on_p` instead — whose sign convention is
+     * the other way round (`< 0` = drawing from the grid).
+     *
+     * `reverse` describes the connector: the grid line is drawn from the house
+     * out to the grid, so importing has to run it backwards.
+     */
+    _gridNode(d, hasMeter) {
+      const power = hasMeter ? d.grid : d.gridOn;
+      const importing = hasMeter ? power > 0 : power < 0;
+      return {
+        caption: hasMeter ? this._t("Grid", "电网") : this._t("Grid & load", "电网&负载"),
+        value: fmtW(power),
+        power,
+        color: importing ? COLORS.grid : COLORS.grid_out,
+        reverse: importing,
+        pill: this._gridPill(power, importing),
+      };
+    }
+
+    /**
+     * Direction pill of the bottom right node.  Only the two live directions
+     * are named — the vendor app does the same, and a node that carries no
+     * power simply gets no pill instead of a「待机」chip.
+     */
+    _gridPill(power, importing) {
+      if (Math.abs(num(power)) < MIN_FLOW) return null;
+      return {
+        text: importing ? this._t("Grid in", "电网输入") : this._t("Grid out", "电网输出"),
+        cls: "warn",
+      };
     }
 
     /** Map the firmware's `bat_sts` string to a label + pill style. */
@@ -717,15 +930,6 @@ function _hmPowerFlowRegister() {
       }
       const entry = table[key] || table.standby;
       return { key, cls: entry.cls, text: this._t(entry.en, entry.zh) };
-    }
-
-    /** Grid direction pill, matching the vendor app's 电网输入/电网输出. */
-    _gridPill(grid) {
-      if (Math.abs(grid) < MIN_FLOW) {
-        return { text: this._t("Standby", "待机"), cls: "" };
-      }
-      if (grid > 0) return { text: this._t("Grid in", "电网输入"), cls: "warn" };
-      return { text: this._t("Grid out", "电网输出"), cls: "warn" };
     }
 
     /**
@@ -792,6 +996,9 @@ function _hmPowerFlowRegister() {
             @change=${this._changed("temperature_entity")}></ha-textfield>
           <ha-textfield label="max_width (px)" .value=${config.max_width || ""}
             @change=${this._changed("max_width")}></ha-textfield>
+          <ha-textfield label="has_meter (auto|true|false)"
+            .value=${config.has_meter === undefined ? "auto" : String(config.has_meter)}
+            @change=${this._changed("has_meter")}></ha-textfield>
           <label class="sw">
             <ha-switch .checked=${config.show_title !== false}
               @change=${this._toggle("show_title")}></ha-switch>
