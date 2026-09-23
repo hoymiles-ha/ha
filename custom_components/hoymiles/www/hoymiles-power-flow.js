@@ -16,8 +16,9 @@
  *     dropped and the bottom right node becomes 「电网&负载」, showing the
  *     device level on-grid port power (`grid_on_p`) instead.
  *
- * The bottom right node only ever wears one of the two live direction pills
- * (电网输入 / 电网输出); a node that carries no power gets no pill at all.
+ * The 电网 / 电网&负载 node only ever wears one of the two live direction pills
+ * (电网输入 / 电网输出), and only when a meter is what feeds it; a node that
+ * carries no power gets no pill at all rather than a 「待机」chip.
  *
  * Note the two readings use opposite sign conventions: with a meter
  * `sys_grid_p` is positive while importing, while the device level `grid_on_p`
@@ -908,10 +909,13 @@ function _hmPowerFlowRegister() {
      * Bottom right node of the diagram.
      *
      * With a meter it is the grid: `sys_grid_p` (`> 0` = drawing from the grid,
-     * `< 0` = feeding back).  Without one the firmware has no way to tell the
-     * grid from the house, so the node becomes 「电网&负载」 and shows the device
-     * level on-grid port power `grid_on_p` instead — whose sign convention is
-     * the other way round (`< 0` = drawing from the grid).
+     * `< 0` = feeding back), and it wears the 电网输入/电网输出 pill.  Without
+     * one the firmware has no way to tell the grid from the house, so the node
+     * becomes 「电网&负载」 and shows the device level on-grid port power
+     * `grid_on_p` instead — with no pill at all, because that combined reading
+     * cannot be attributed to either side (the vendor app shows it the same
+     * way).  Its sign convention is also the other way round: `< 0` = drawing
+     * from the grid.
      *
      * `reverse` describes the connector: the grid line is drawn from the house
      * out to the grid, so importing has to run it backwards.
@@ -925,14 +929,14 @@ function _hmPowerFlowRegister() {
         power,
         color: importing ? COLORS.grid : COLORS.grid_out,
         reverse: importing,
-        pill: this._gridPill(power, importing),
+        pill: hasMeter ? this._gridPill(power, importing) : null,
       };
     }
 
     /**
-     * Direction pill of the bottom right node.  Only the two live directions
-     * are named — the vendor app does the same, and a node that carries no
-     * power simply gets no pill instead of a「待机」chip.
+     * Direction pill of the grid node.  Only the two live directions are
+     * named — the vendor app does the same, and a node that carries no power
+     * simply gets no pill instead of a「待机」chip.
      */
     _gridPill(power, importing) {
       if (Math.abs(num(power)) < MIN_FLOW) return null;
