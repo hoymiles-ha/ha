@@ -36,7 +36,10 @@
  *     soc: sensor.my_soc
  *     battery_status: sensor.my_battery_status
  *     rssi: sensor.my_rssi
+ *     pv2: sensor.my_system_pv2_power
+ *     smart_plug: sensor.my_system_smart_plug_power
  *   show_rssi: true               # optional, hide the fan with false
+ *   show_extras: true             # optional, hide the PV2 / smart plug chips
  * ========================================================================== */
 
 function _hmPowerFlowRegister() {
@@ -55,6 +58,8 @@ function _hmPowerFlowRegister() {
 
   const COLORS = {
     pv: "#f5a623",
+    pv6: "#f5a623",
+    sp: "#0ea5e9",
     battery: "#22c55e",
     battery_idle: "#9aa3ae",
     charge: "#22c55e",
@@ -279,6 +284,10 @@ function _hmPowerFlowRegister() {
         .pf-pill.ok text { fill: #15803d; }
         .pf-pill.busy rect { fill: rgba(74,144,217,0.18); }
         .pf-pill.busy text { fill: #1d4ed8; }
+        /* small side chips (PV2 / smart plug), top left corner */
+        .pf-chip rect { fill: var(--hm-pf-chip, rgba(120,133,150,0.14)); }
+        .pf-chip text { font-size: 12px; fill: var(--hm-pf-chip-text, #4b5563); }
+        .pf-chip .v { font-weight: 600; }
         .note { font-size: 12px; color: var(--secondary-text-color);
                 text-align: center; padding: 4px 0 8px; }
       `;
@@ -319,8 +328,9 @@ function _hmPowerFlowRegister() {
       return [
         this._config.language, this._config.gradient, this._config.max_width,
         this._config.title, this._config.show_title, this._config.show_rssi,
-        this._temperature(),
+        this._config.show_extras, this._temperature(),
         d.pv, d.battery, d.grid, d.load, d.soc, d.status, d.rssi,
+        d.pv2, d.smartPlug,
       ].join("\u0001");
     }
 
@@ -448,7 +458,16 @@ function _hmPowerFlowRegister() {
       // top right corner of the header.
       const rssi = this._read("rssi", null);
 
-      return { pv, battery, grid, load, soc, status: status.toLowerCase(), rssi };
+      // The two branches the four main nodes do not show, but which the load
+      // formula does include: `load = grid + plug + pv2 - sp`. Without them the
+      // four numbers on screen cannot be made to balance. `null` means the
+      // device does not report the field (a slave unit), and the chip is hidden.
+      const pv2 = this._read("system_pv2_power", null);
+      const smartPlug = this._read("system_smart_plug_power", null);
+
+      return {
+        pv, battery, grid, load, soc, status: status.toLowerCase(), rssi, pv2, smartPlug,
+      };
     }
 
     /* ----------------------------- render ----------------------------- */
@@ -612,6 +631,39 @@ function _hmPowerFlowRegister() {
       const gridPill = this._gridPill(d.grid);
       const showSoc = d.soc !== null && !Number.isNaN(d.soc);
 
+      /**
+       * Small side chip: a coloured dot, a name and a value. Used for the two
+       * branches the illustration has no node for (PV2 on the grid side and
+       * the smart plug), so the four big numbers can be reconciled.
+       */
+      const chip = (x, y, name, value, color) => {
+        const dot = 7;
+        const nameW = [...name].reduce((acc, ch) => acc + (ch.charCodeAt(0) > 0x2e80 ? 12.5 : 7.2), 0);
+        const valW = [...value].reduce((acc, ch) => acc + (ch.charCodeAt(0) > 0x2e80 ? 12.5 : 7), 0);
+        const gap = 9;
+        const padR = 12;
+        const w = dot + 7 + nameW + gap + valW + padR;
+        const h = 24;
+        return `<g class="pf-chip">
+            <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}"
+                  height="${h}" rx="${h / 2}"/>
+            <circle cx="${(x + 12).toFixed(1)}" cy="${(y + h / 2).toFixed(1)}" r="3.6" fill="${color}"/>
+            <text x="${(x + 21).toFixed(1)}" y="${(y + h / 2 + 4).toFixed(1)}">${esc(name)}</text>
+            <text class="v" x="${(x + 21 + nameW + gap).toFixed(1)}"
+                  y="${(y + h / 2 + 4).toFixed(1)}">${esc(value)}</text>
+          </g>`;
+      };
+
+      const extras = [];
+      if (this._config.show_extras !== false) {
+        if (d.pv2 !== null) {
+          extras.push(chip(40, 34, this._t("PV2", "光伏2"), fmtW(d.pv2), COLORS.pv6));
+        }
+        if (d.smartPlug !== null) {
+          extras.push(chip(40, 66, this._t("Smart plug", "智能插座"), fmtW(d.smartPlug), COLORS.sp));
+        }
+      }
+
       return `<svg viewBox="0 0 ${VB_W} ${VB_H}" preserveAspectRatio="xMidYMid meet"
                    xmlns="http://www.w3.org/2000/svg" role="img">
         <defs>
@@ -634,6 +686,7 @@ function _hmPowerFlowRegister() {
         ${label(648, 428, fmtW(d.grid), this._t("Grid", "电网"),
           { pill: gridPill.text, pillClass: gridPill.cls })}
         ${label(612, 52, fmtW(d.load), this._t("Load", "负载"))}
+        ${extras.join("")}
       </svg>`;
     }
 

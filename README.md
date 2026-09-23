@@ -186,6 +186,7 @@ show_title: false        # 可选，false 隐藏标题与设备 SN（只留右�
 language: zh             # 可选 en|zh
 temperature_entity: sensor.outdoor_temperature   # 可选，标题右侧显示温度
 show_rssi: true          # 可选，右上角信号扇形（默认 true）
+show_extras: true        # 可选，左上角「光伏2 / 智能插座」小气泡（默认 true）
 gradient: true           # 可选，浅色渐变底（默认 true）
 max_width: 620           # 可选，插图最大宽度
 ```
@@ -198,6 +199,8 @@ max_width: 620           # 可选，插图最大宽度
 | 微储 | `system_battery_power`（负=充电）+ `system_soc` |
 | 电网 | `system_grid_power`（正=受电） |
 | 负载 | `system_load_power` |
+| 光伏2 气泡 | `system_pv2_power` |
+| 智能插座气泡 | `system_smart_plug_power` |
 | 状态气泡 | `battery_status`（`standby`/`charge`/`discharge`/`lock`） |
 | 信号扇形 | `rssi`（dBm） |
 
@@ -215,6 +218,17 @@ max_width: 620           # 可选，插图最大宽度
   | < -75 dBm | 1（较弱） |
 
   设备不上报 `rssi` 时自动隐藏，不需要可以把 `show_rssi` 设为 `false`。
+- **左上角两个小气泡（光伏2 / 智能插座）** 用来补齐插图上没有节点的两条支路。
+  设备侧的负载是这么算出来的：
+
+  ```
+  负载 = 电网 + 插座 + 光伏2 − 智能插座
+  ```
+
+  也就是说「光伏2」和「智能插座」参与了 `负载` 的计算，但插图上只有「光伏」一个
+  节点，只看四个大数字是对不上账的，所以把这两路单独做成小气泡显示。
+  从机不上报这两个字段时（读到 `null`）气泡自动隐藏；整组关掉用
+  `show_extras: false`。
 - 单独覆盖某个实体用 `entities:` 段，例如 `entities: { pv: sensor.my_pv, rssi: sensor.my_rssi }`。
 
 ## 电池卡片
