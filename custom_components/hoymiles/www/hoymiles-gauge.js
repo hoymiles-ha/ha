@@ -26,6 +26,21 @@
  *   icon: ☀️                   # optional, shown next to the title
  *   label: 自发自用率          # optional caption under the percentage
  *   color: "#22c55e"          # optional arc colour (default green)
+ *   show_arc: false           # optional, drop the arch and its percentage
+ *                             #   altogether - the card is then just the
+ *                             #   readout (default true)
+ *
+ * The arch shows the value as a share of `max`.  When the interesting number is
+ * a ratio between entities rather than a share of a made-up ceiling, give the
+ * arch its own source instead:
+ *
+ *   percent_numerator:   sensor.energy_today      # required for ratio mode
+ *   percent_subtract:    sensor.energy_exported  # optional, taken off it
+ *   percent_denominator: sensor.energy_today     # optional, defaults to the
+ *                                                #   numerator
+ *
+ * e.g. self consumption = (发电量 − 上网电量) / 发电量.  The readout (big number)
+ * still shows `entity`; only the arch and its percentage come from the ratio.
  * ========================================================================== */
 
 function _hmGaugeRegister() {
@@ -182,6 +197,42 @@ function _hmGaugeRegister() {
       return Math.ceil(value / exp) * exp;
     }
 
+    /**
+     * A numeric state, or null when it is missing or unusable.  Deliberately not
+     * `_read()`: that one applies `scale` for the readout, while a ratio mixes
+     * entities whose units cancel out, so only the raw numbers belong here.
+     */
+    _entityNumber(entityId) {
+      const state = this._hass && this._hass.states ? this._hass.states[entityId] : null;
+      if (!state) return null;
+      const raw = String(state.state);
+      if (["unknown", "unavailable", ""].includes(raw)) return null;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    /**
+     * The arch fraction asked for by `percent_numerator` et al, or null to fall
+     * back to value/max.  See the header comment: self consumption is
+     * `(发电量 − 上网电量) / 发电量`.  `percent_subtract` is taken as a magnitude,
+     * because "how much was exported" is a quantity - the sign convention of the
+     * source entity must not flip the ratio.
+     */
+    _ratio() {
+      const config = this._config || {};
+      if (!config.percent_numerator) return null;
+      const numerator = this._entityNumber(config.percent_numerator);
+      const denominator = config.percent_denominator
+        ? this._entityNumber(config.percent_denominator)
+        : numerator;
+      const subtract = config.percent_subtract
+        ? this._entityNumber(config.percent_subtract)
+        : 0;
+      if (numerator == null || denominator == null || subtract == null) return null;
+      if (!(denominator > 0)) return null; // nothing to divide by yet
+      return clamp((numerator - Math.abs(subtract)) / denominator, 0, 1);
+    }
+
     /* ----------------------------- rendering ----------------------------- */
 
     render() {
@@ -191,11 +242,20 @@ function _hmGaugeRegister() {
       const icon = this._config.icon == null ? "" : String(this._config.icon);
       const min = this._config.min == null ? 0 : num(this._config.min);
       const max = Math.max(this._max(), 1e-9);
-      // A missing state still draws the empty arch: a bare "-" on a blank card
-      // reads like a broken card, an arc at 0 % does not.
-      const frac = value == null ? 0 : clamp((value - min) / (max - min || 1), 0, 1);
+      // A configured ratio wins over value/max: it is the number the arch is
+      // asked to show, and a made-up `max` only ever produced a meaningless
+      // percentage.  A missing state still draws the empty arch: a bare "-" on a
+      // blank card reads like a broken card, an arc at 0 % does not.
+      const ratio = this._ratio();
+      const hasValue = value != null || ratio != null;
+      const frac = ratio != null ? ratio
+        : (value == null ? 0 : clamp((value - min) / (max - min || 1), 0, 1));
       const shown = value == null ? "—" : group(value.toFixed(this._decimals()));
       const unit = this._unit();
+      // `show_arc: false` drops the whole indicator: no arch, no percentage, no
+      // empty space where they used to be.  Checked against `false` so an absent
+      // option keeps the arch.
+      const dial = this._config.show_arc === false ? "" : this._arc(frac, hasValue);
 
       return html`
         <ha-card>
@@ -207,7 +267,7 @@ function _hmGaugeRegister() {
             <span class="value">${shown}</span>
             ${unit === "" || value == null ? "" : html`<span class="unit">${esc(unit)}</span>`}
           </div>
-          <div class="dial">${this._untrusted(this._arc(frac, value != null))}</div>
+          ${dial === "" ? "" : html`<div class="dial">${this._untrusted(dial)}</div>`}
         </ha-card>
       `;
     }
@@ -295,6 +355,18 @@ function _hmGaugeRegister() {
             @change=${this._changed("label")}></ha-textfield>
           <ha-textfield label="color (default #22c55e)" .value=${config.color || ""}
             @change=${this._changed("color")}></ha-textfield>
+          <ha-textfield label="show_arc (false = 不要弧线和百分比）"
+            .value=${config.show_arc === false ? "false" : ""}
+            @change=${this._changed("show_arc")}></ha-textfield>
+          <ha-textfield label="percent_numerator (弧线百分比的分子)"
+            .value=${config.percent_numerator || ""}
+            @change=${this._changed("percent_numerator")}></ha-textfield>
+          <ha-textfield label="percent_subtract (可选，从分子减掉)"
+            .value=${config.percent_subtract || ""}
+            @change=${this._changed("percent_subtract")}></ha-textfield>
+          <ha-textfield label="percent_denominator (可选，默认=分子)"
+            .value=${config.percent_denominator || ""}
+            @change=${this._changed("percent_denominator")}></ha-textfield>
         </div>
       `;
     }
