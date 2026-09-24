@@ -28,20 +28,41 @@
 ├── DEPLOY.md                         # 本文件
 ├── hacs.json                         # HACS 必需：清单
 ├── scripts/
-│   ├── make_brand_icon.ps1           # 生成合成品牌图标（无素材时的兜底）
-│   ├── make_brand_from_image.ps1     # 从 logo 图片抠底生成 icon.png + logo.png
+│   ├── brand-source.png              # 官方 logo 原始稿（设计源，不随集成下发）
+│   ├── make_brand_from_official.ps1  # ★ 从官方 logo 生成 icon.png + logo.png
+│   ├── make_brand_icon.ps1           # 备用：合成一个品牌图标（无素材时的兜底）
+│   ├── make_brand_from_image.ps1     # 备用：从截图/图片抠底生成
 │   └── release.ps1                   # 一键发版
 └── custom_components/                # HACS 必需：集成目录
     └── hoymiles/
         ├── brand/
         │   ├── icon.png              # HACS 品牌校验必需；本地图标可免去上游 PR
-        │   └── logo.png              # 完整 wordmark（宽版）
+        │   └── logo.png              # 横向锁定版：圆标 + 字标
         ├── manifest.json             # 必需，含 version（HACS 硬性要求）
         ├── www/
         │   ├── hoymiles-tou-editor.js
         │   └── hoymiles-energy-sankey.js
         └── ... (config_flow / sensor / services ...)
 ```
+
+### 品牌图（brand/）
+
+`icon.png` 与 `logo.png` **由脚本从官方 logo 生成，不要手工替换**：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\make_brand_from_official.ps1
+```
+
+- 输入：`scripts/brand-source.png`（官方 logo 原始稿：蓝色实心圆 + 白色 H，下方 "Hoymiles" 字标）
+- 输出：`custom_components/hoymiles/brand/icon.png`（256×256，圆形标记）
+  与 `logo.png`（横向锁定版，圆标在左 + 字标在右）
+- 脚本自带规格自检，不达标会直接报错
+- 品牌蓝为 `#0303D8`
+
+> ⚠️ **不要用字标裁剪出方形图标。** 曾经踩过这个坑：把宽字标裁成方形后，
+> 字母会超出标记范围，在 HA「选择品牌或集成」弹窗把图标渲染到约 40 px 时
+> 糊成一团，看起来像只画了一半。圆形标记必须单独提取。
+> 回归由 `ha_monitor/_preview/make-brand-check.cjs` 守住。
 
 一键复核必需项：
 

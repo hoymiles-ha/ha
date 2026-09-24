@@ -86,6 +86,34 @@ $missing = @($required | Where-Object { -not (Test-Path (Join-Path $repoRoot $_)
 if ($missing.Count -gt 0) { Fail ("缺少 HACS 上架必需文件：" + ($missing -join ", ")) }
 Ok "必需文件齐全"
 
+# Brand images have their own spec; releasing a broken icon is a silent UX bug
+# (it renders at ~40 px in the HA "pick a brand" dialog, where a bad mark just
+# looks like a smudge).
+Add-Type -AssemblyName System.Drawing
+$brandDir = Join-Path $repoRoot "custom_components\hoymiles\brand"
+foreach ($img in @(
+        @{ Name = "icon.png"; WantSquare = $true },
+        @{ Name = "logo.png"; WantSquare = $false }
+    )) {
+    $p = Join-Path $brandDir $img.Name
+    $bmp = [System.Drawing.Bitmap]::FromFile($p)
+    $w = $bmp.Width
+    $h = $bmp.Height
+    $bmp.Dispose()
+    $short = [Math]::Min($w, $h)
+    if ($img.WantSquare) {
+        if ($w -ne $h -or $w -lt 256) {
+            Fail "$($img.Name) 不合规：期望正方形且边长 >= 256，实际 ${w}x${h}。请运行 scripts\make_brand_from_official.ps1"
+        }
+    }
+    else {
+        if ($short -lt 128 -or $short -gt 256) {
+            Fail "$($img.Name) 不合规：短边需在 128..256，实际 ${w}x${h}。请运行 scripts\make_brand_from_official.ps1"
+        }
+    }
+}
+Ok "品牌图规格合规"
+
 foreach ($jsonPath in @($hacsPath, $manifestPath)) {
     try { $null = Read-JsonFile $jsonPath }
     catch { Fail "JSON 非法：$jsonPath -> $($_.Exception.Message)" }
