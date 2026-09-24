@@ -75,10 +75,15 @@ function _hmTouRegister() {
         .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
                margin-bottom: 14px; }
         .chip { font-size: 12.5px; color: var(--secondary-text-color); }
-        .gate { padding: 14px; border-radius: 14px; font-size: 13.5px;
-                line-height: 1.5;
-                background: var(--secondary-background-color, rgba(120,120,128,.12));
-                color: var(--secondary-text-color); }
+        /* Non-TOU mode: the editor stays visible but read-only, so the plan can
+           still be inspected. The banner is outside .locked and keeps working. */
+        .notice { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+                  padding: 10px 14px; border-radius: 12px; margin-bottom: 12px;
+                  background: var(--secondary-background-color, rgba(120,120,128,.12));
+                  font-size: 13.5px; color: var(--secondary-text-color); }
+        .notice span { flex: 1 1 auto; }
+        .locked { opacity: .5; pointer-events: none;
+                  -webkit-user-select: none; user-select: none; }
 
         /* rounded group, like an iOS settings section */
         .group { background: var(--secondary-background-color, rgba(120,120,128,.08));
@@ -89,24 +94,30 @@ function _hmTouRegister() {
 
         .tblwrap { overflow-x: auto; border-radius: 14px; }
         table { border-collapse: collapse; width: 100%; }
-        th, td { border: none; padding: 8px 6px; font-size: 13.5px;
+        th, td { border: none; padding: 8px 4px; font-size: 13.5px;
                  text-align: left; vertical-align: middle; }
         thead th { font-size: 12px; font-weight: 500; padding-top: 10px;
                    padding-bottom: 6px;
                    color: var(--secondary-text-color); white-space: nowrap; }
         tbody tr + tr td { border-top: 1px solid var(--divider-color); }
-        tbody td:first-child, thead th:first-child { padding-left: 14px; }
-        tbody td:last-child, thead th:last-child { padding-right: 14px; }
-        .wplan { min-width: 420px; }
-        .dplan { min-width: 780px; }
+        tbody td:first-child, thead th:first-child { padding-left: 12px; }
+        tbody td:last-child, thead th:last-child { padding-right: 12px; }
+        /* The card can be half the dashboard width (side by side with the control
+           card), so the day-plan table has to fit ~620px. */
+        .wplan { min-width: 0; }
+        .dplan { min-width: 540px; }
+        .dplan th, .dplan td { padding-left: 3px; padding-right: 3px; }
+        .dplan td:first-child, .dplan th:first-child { padding-left: 12px; }
+        .dplan td:last-child, .dplan th:last-child { padding-right: 12px; }
+        .dplan select, .dplan input { padding: 5px 6px; font-size: 13px; }
         select, input { width: 100%; box-sizing: border-box; min-width: 0;
                         font: inherit; font-size: 13.5px; padding: 6px 9px;
                         border-radius: 9px; border: 1px solid transparent;
                         background: var(--card-background-color, #fff);
                         color: var(--primary-text-color); outline: none; }
         select:focus, input:focus { border-color: var(--primary-color); }
-        .col-mode { width: 118px; } .col-time { width: 112px; }
-        .col-num { width: 84px; } .col-btn { width: 46px; }
+        .col-mode { width: 96px; } .col-time { width: 86px; }
+        .col-num { width: 52px; } .col-btn { width: 30px; }
 
         /* segmented control (day 1..8) */
         .seg { display: inline-flex; padding: 2px; gap: 2px; max-width: 100%;
@@ -373,27 +384,11 @@ function _hmTouRegister() {
     render() {
       if (!this._draft) this._resetDraft();
       const mode = this._emsMode();
-      if (this._config.require_tou_mode !== false && mode && mode !== "tou_plan") {
-        return html`
-          <ha-card>
-            <div class="wrap">
-              <div class="head">
-                <div class="title">${this._config.title || this._t("TOU plan", "分时计划")}</div>
-              </div>
-              <div class="gate">
-                ${this._t("Hidden: EMS mode is ", "已隐藏：EMS 模式为 ")}
-                <b>${mode}</b>${this._t(", not 'tou_plan'.", "，不是 tou_plan。")}<br/>
-                ${this._t("Switch to TOU mode to edit the plan.", "切换到 tou_plan 后可编辑分时计划。")}
-              </div>
-              <div class="bar" style="margin-top:14px; margin-bottom:0">
-                <button class="btn primary" @click=${() => this._setMode("tou_plan")}>
-                  ${this._t("Switch to tou_plan", "切换到 tou_plan")}
-                </button>
-              </div>
-            </div>
-          </ha-card>
-        `;
-      }
+      /* The plan is only editable in tou_plan. Other modes keep the card visible
+         but greyed out (read-only) instead of replacing it with a hint - the
+         user asked to be able to look at the plan without switching modes. */
+      const locked = this._config.require_tou_mode !== false
+        && !!mode && mode !== "tou_plan";
 
       const day = this._draft.curDay;
       const segments = this._draft.days[day] || [];
@@ -401,7 +396,18 @@ function _hmTouRegister() {
 
       return html`
         <ha-card>
-          <div class="wrap">
+          ${locked ? html`
+            <div class="notice">
+              <span>
+                ${this._t("Read-only: EMS mode is ", "只读：EMS 模式为 ")}
+                <b>${mode}</b>${this._t(", not tou_plan.", "，不是 tou_plan。")}
+              </span>
+              <button class="btn primary" @click=${() => this._setMode("tou_plan")}>
+                ${this._t("Switch to tou_plan", "切换到 tou_plan")}
+              </button>
+            </div>` : ""}
+          <div class="wrap ${locked ? "locked" : ""}"
+               aria-disabled=${locked ? "true" : "false"}>
             <div class="head">
               <div class="title">${this._config.title || this._t("TOU plan", "分时计划")}</div>
               <div class="sub">${this._dev()} · EMS: ${mode || "?"}</div>
