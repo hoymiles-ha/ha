@@ -23,8 +23,8 @@
  * Card config:
  *   type: custom:hoymiles-history-chart
  *   dev_id: MSA-280520260806        # optional when every series names an entity
- *   title: 历史数据
- *   language: zh                    # optional (en|zh)
+ *   title: History
+ *   language: en                    # optional (en|zh); omit to follow Home Assistant
  *   range: day                      # initial range (day|month|year)
  *   height: 330                     # optional svg height in px
  *   unit: W                         # optional unit label (auto-promotes to kW)
@@ -50,6 +50,22 @@ function _hmHistoryRegister() {
   const LitElement = Object.getPrototypeOf(customElements.get("ha-panel-lovelace"));
   const html = LitElement.prototype.html;
   const css = LitElement.prototype.css;
+
+  /* ------------------------------------------------------------------ *
+   * Language
+   *
+   * An explicit `language:` in the card config wins. When it is absent the
+   * card follows the Home Assistant user's language (`hass.language`), so a
+   * dashboard matches the UI without per-card configuration. Any Chinese
+   * variant counts as Chinese - Home Assistant reports `zh-Hans` / `zh-Hant`
+   * and may carry a region suffix such as `zh-Hans-CN`.
+   * ------------------------------------------------------------------ */
+  function hmLang(hass, config) {
+    const wanted = config && config.language;
+    if (wanted) return String(wanted).toLowerCase().startsWith("zh") ? "zh" : "en";
+    const ui = hass && hass.language;
+    return ui && String(ui).toLowerCase().startsWith("zh") ? "zh" : "en";
+  }
 
   /* ------------------------------------------------------------------ *
    * Layout / behaviour constants
@@ -270,7 +286,7 @@ function _hmHistoryRegister() {
     }
 
     static getStubConfig() {
-      return { title: "历史数据", language: "zh", range: "day", series: [] };
+      return { range: "day", series: [] };
     }
 
     static get styles() {
@@ -383,7 +399,7 @@ function _hmHistoryRegister() {
     }
 
     _t(en, zh) {
-      return this._config && this._config.language === "zh" ? zh : en;
+      return hmLang(this._hass, this._config) === "zh" ? zh : en;
     }
 
     /* --------------------------- time windows --------------------------- */
@@ -1109,8 +1125,8 @@ function _hmHistoryRegister() {
         <div class="row">
           <ha-textfield label="title" .value=${config.title || ""}
             @change=${this._changed("title")}></ha-textfield>
-          <ha-textfield label="language (en|zh)" .value=${config.language || "zh"}
-            @change=${this._changed("language")}></ha-textfield>
+          <ha-textfield label="language (auto|en|zh, auto follows Home Assistant)"
+            .value=${config.language || ""} @change=${this._changed("language")}></ha-textfield>
           <ha-textfield label="range (day|month|year)" .value=${config.range || "day"}
             @change=${this._changed("range")}></ha-textfield>
           <ha-textfield label="unit (W|%)" .value=${config.unit || ""}
@@ -1122,7 +1138,7 @@ function _hmHistoryRegister() {
           <label class="sw">
             <ha-switch .checked=${config.show_toolbar !== false}
               @change=${this._toggle("show_toolbar")}></ha-switch>
-            <span>show_toolbar (本卡自己的时间控件)</span>
+            <span>show_toolbar (this card's own time controls)</span>
           </label>
         </div>
         <div class="hint">

@@ -20,12 +20,28 @@ CDN。用 **添加卡片 → 手动** 粘贴 YAML，或直接写进仪表盘 YAM
 | 参数 | 类型 | 说明 |
 |---|---|---|
 | `dev_id` | string | 设备标识 `<client_prefix>-<SN>`（如 `MSA-280520260806`）。除仪表盘卡片（按实体取值）外均为**必填** |
-| `language` | `zh` \| `en` | 卡片界面语言，默认 `en` |
+| `language` | `zh` \| `en` | **不填则跟随 Home Assistant**：使用当前登录用户的语言（任何 `zh-*` 都算中文）。只有在需要把某张卡片钉死为某种语言时才填。 |
 | `title` | string | 卡片标题，各卡片默认值不同（见下文） |
 | `show_title` | bool | 设为 `false` 隐藏标题（部分卡片同时隐藏设备 SN） |
 
 `dev_id` 的作用：卡片据此推导出所需实体 id（`sensor.<dev_id 转下划线>_<后缀>`）。
 如果你的实体命名不符合这个规律，用各卡片的 `entities:` 映射单独覆盖。
+
+### 语言是怎么选的
+
+1. 卡片配置里显式写了 `language: en` / `language: zh` → **以它为准**。只有需要把
+   某张卡片钉死语言时才写。
+2. 否则跟随**当前 Home Assistant 用户**的语言（在 **个人资料 → 语言** 里设置）。
+   任何以 `zh` 开头的语言代码（`zh-Hans`、`zh-Hant`、`zh-Hans-CN`）都算中文，
+   其余都算英文。
+3. 它是在每次渲染时解析的，所以切换个人语言**所有卡片实时跟着变**，不用刷新页面、
+   也不用改配置。
+
+> 所以同一个仪表盘对英文用户和中文用户会各自显示成正确的语言：语言是**看的人的属性**，
+> 不是卡片的属性。
+
+> `hoymiles-gauge` 是例外 —— 它内部没有任何文案，上面的字全部来自你配置的
+> `name` / `label` / `icon`，永远不需要翻译。
 
 ---
 
@@ -46,7 +62,7 @@ language: zh
 | `dev_id` | string | — | **必填** |
 | `title` | string | 本地化的「我的家」 | 标题文字 |
 | `show_title` | bool | `true` | `false` 隐藏标题与设备 SN，只留右侧信号图标 |
-| `language` | `zh` \| `en` | `en` | 界面语言 |
+| `language` | `zh` \| `en` | *自动* | 钉死卡片语言；不填则跟随当前 Home Assistant 用户的语言。 |
 | `temperature_entity` | entity id | — | 标题右侧显示的温度实体 |
 | `show_rssi` | bool | `true` | 右上角 Wi-Fi 信号扇形 |
 | `show_extras` | bool | `true` | 左上角「光伏2 / 智能插座」小气泡 |
@@ -150,7 +166,7 @@ language: zh
 | `dev_id` | string | — | **必填** |
 | `title` | string | 自动读设备型号 | 覆盖设备注册表里的型号 |
 | `show_title` | bool | `true` | `false` 隐藏标题 |
-| `language` | `zh` \| `en` | `en` | 界面语言 |
+| `language` | `zh` \| `en` | *自动* | 钉死卡片语言；不填则跟随当前 Home Assistant 用户的语言。 |
 | `show_history` | bool | `true` | 可选历史数据区（需启用 recorder） |
 | `max_width` | number (px) | `560` | 插图最大宽度 |
 | `alarm_entity` | entity id | — | 该实体为 `on` 时标题左侧显示铃铛 |
@@ -200,7 +216,7 @@ show_temperature: false
 |---|---|---|---|
 | `dev_id` | string | — | **必填** |
 | `title` | string | 本地化的「电池电量」 | 标题文字 |
-| `language` | `zh` \| `en` | `en` | 界面语言 |
+| `language` | `zh` \| `en` | *自动* | 钉死卡片语言；不填则跟随当前 Home Assistant 用户的语言。 |
 | `columns` | number | `1` | 按 N 列排布；不填为单列 |
 | `show_temperature` | bool | `true` | `false` 时只显示 SOC，不显示 ℃ |
 
@@ -234,7 +250,7 @@ series:
 | `series` | list | — | **必填**，每条曲线一项：`entity` / `name` / `color` |
 | `dev_id` | string | — | 可选（所有 series 都给了 `entity` 时可省） |
 | `title` | string | — | 卡片标题 |
-| `language` | `zh` \| `en` | `en` | 界面语言 |
+| `language` | `zh` \| `en` | *自动* | 钉死卡片语言；不填则跟随当前 Home Assistant 用户的语言。 |
 | `range` | `day` \| `month` \| `year` | `day` | 初始范围 |
 | `height` | number (px) | `330` | SVG 高度 |
 | `unit` | string | — | 纵轴单位（超过 1.5 kW 自动换成 kW） |
@@ -348,7 +364,7 @@ title: 设备控制
 |---|---|---|---|
 | `dev_id` | string | — | **必填** |
 | `title` | string | 本地化的「设备控制」 | 卡片标题 |
-| `language` | `zh` \| `en` | `en` | 界面语言 |
+| `language` | `zh` \| `en` | *自动* | 钉死卡片语言；不填则跟随当前 Home Assistant 用户的语言。 |
 | `show_power_ctrl` | bool | `true` | `false` 隐藏「功率控制」行 |
 | `show_phase` | bool | `true` | `false` 隐藏「多相输出功率」行 |
 | `show_topics` | bool | `false` | 在每行下方显示 MQTT 主题（调试用） |
@@ -396,7 +412,7 @@ language: zh
 |---|---|---|---|
 | `dev_id` | string | — | **必填** |
 | `title` | string | 本地化的标题 | 卡片标题 |
-| `language` | `zh` \| `en` | `en` | 界面语言 |
+| `language` | `zh` \| `en` | *自动* | 钉死卡片语言；不填则跟随当前 Home Assistant 用户的语言。 |
 | `require_tou_mode` | bool | `true` | 只有在 EMS 模式为 `tou_plan` 时才渲染编辑界面；`false` 关掉该门控 |
 | `ems_entity` | entity id | 自动 | 覆盖用于读取 EMS 模式的实体 |
 | `status_entity` | entity id | 自动 | 覆盖用于读取计划状态的实体 |
@@ -439,7 +455,7 @@ range: today
 |---|---|---|---|
 | `dev_id` | string | — | **必填** |
 | `title` | string | 本地化标题 | 卡片标题 |
-| `language` | `zh` \| `en` | `en` | 界面语言 |
+| `language` | `zh` \| `en` | *自动* | 钉死卡片语言；不填则跟随当前 Home Assistant 用户的语言。 |
 | `range` | `today` \| `7d` \| `30d` \| `month` | `today` | 时间范围 |
 | `balancer_label` | string | 本地化 | 「损耗 / 未计量」节点的自定义名称 |
 | `show_toolbar` | bool | `true` | `false` 隐藏时间段切换栏 |

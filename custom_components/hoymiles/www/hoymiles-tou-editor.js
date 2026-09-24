@@ -12,7 +12,7 @@
  *   type: custom:hoymiles-tou-editor
  *   dev_id: MSA-280520260806     # required
  *   title: TOU plan              # optional
- *   language: zh                 # optional (en|zh)
+ *   language: en                 # optional (en|zh); omit to follow Home Assistant
  *   ems_entity / status_entity / day_ack_entity / week_ack_entity  # optional
  * ========================================================================== */
 
@@ -20,6 +20,22 @@ function _hmTouRegister() {
   const LitElement = Object.getPrototypeOf(customElements.get("ha-panel-lovelace"));
   const html = LitElement.prototype.html;
   const css = LitElement.prototype.css;
+
+  /* ------------------------------------------------------------------ *
+   * Language
+   *
+   * An explicit `language:` in the card config wins. When it is absent the
+   * card follows the Home Assistant user's language (`hass.language`), so a
+   * dashboard matches the UI without per-card configuration. Any Chinese
+   * variant counts as Chinese - Home Assistant reports `zh-Hans` / `zh-Hant`
+   * and may carry a region suffix such as `zh-Hans-CN`.
+   * ------------------------------------------------------------------ */
+  function hmLang(hass, config) {
+    const wanted = config && config.language;
+    if (wanted) return String(wanted).toLowerCase().startsWith("zh") ? "zh" : "en";
+    const ui = hass && hass.language;
+    return ui && String(ui).toLowerCase().startsWith("zh") ? "zh" : "en";
+  }
 
   const WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const WEEK_ZH = { Mon: "周一", Tue: "周二", Wed: "周三", Thu: "周四", Fri: "周五", Sat: "周六", Sun: "周日" };
@@ -56,7 +72,7 @@ function _hmTouRegister() {
     }
 
     static getStubConfig() {
-      return { dev_id: "MSA-280520260806", language: "zh" };
+      return { dev_id: "MSA-280520260806" };
     }
 
     static get styles() {
@@ -156,7 +172,7 @@ function _hmTouRegister() {
       if (!config || !config.dev_id) {
         throw new Error("hoymiles-tou-editor: 'dev_id' is required");
       }
-      this._config = { language: "en", ...config };
+      this._config = { ...config };
       this._resetDraft();
     }
 
@@ -172,7 +188,7 @@ function _hmTouRegister() {
       if (!this._log) this._log = [];
     }
 
-    _t(en, zh) { return this._config && this._config.language === "zh" ? zh : en; }
+    _t(en, zh) { return hmLang(this._hass, this._config) === "zh" ? zh : en; }
     _dev() { return this._config.dev_id; }
     _weekLabel(day) { return this._t(day, WEEK_ZH[day]); }
 
@@ -482,7 +498,7 @@ function _hmTouRegister() {
                         <select @change=${(e) => this._setSegment(day, index, "mode", Number(e.target.value))}>
                           ${[1, 2, 4].map((m) => html`
                             <option value=${m} ?selected=${Number(seg.mode) === m}>
-                              ${MODE_LABEL[m][this._config.language === "zh" ? "zh" : "en"]}
+                              ${MODE_LABEL[m][hmLang(this._hass, this._config)]}
                             </option>
                           `)}
                         </select>
@@ -558,8 +574,8 @@ function _hmTouRegister() {
             @change=${this._valueChanged("dev_id")} style="display:block"></ha-textfield>
           <ha-textfield label="title" .value=${config.title || ""}
             @change=${this._valueChanged("title")} style="display:block"></ha-textfield>
-          <ha-textfield label="language (en|zh)" .value=${config.language || "en"}
-            @change=${this._valueChanged("language")} style="display:block"></ha-textfield>
+          <ha-textfield label="language (auto|en|zh, auto follows Home Assistant)"
+            .value=${config.language || ""} @change=${this._valueChanged("language")} style="display:block"></ha-textfield>
         </div>
       `;
     }

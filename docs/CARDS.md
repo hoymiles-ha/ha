@@ -23,13 +23,29 @@ appear as `custom:hoymiles-*`.
 | Option | Type | Description |
 |---|---|---|
 | `dev_id` | string | Device identifier, `<client_prefix>-<SN>` (e.g. `MSA-280520260806`). Required on all cards except the gauge, which is entity-driven. |
-| `language` | `zh` \| `en` | UI language of the card. Defaults to `en`. |
+| `language` | `zh` \| `en` | **Follows Home Assistant.** Leave it out and the card uses the language of the HA user viewing it (any `zh-*` code selects Chinese). Set it only to pin one card to a language. |
 | `title` | string | Card heading. Defaults are per-card (see below). |
 | `show_title` | bool | Set `false` to hide the heading (and, on some cards, the device SN). |
 
 How `dev_id` is used: the card derives the entity ids it needs from it
 (`sensor.<dev_id_slug>_<suffix>`). When your entities do not follow that pattern,
 override them individually with the card's `entities:` map.
+
+### How the language is chosen
+
+1. An explicit `language: en` / `language: zh` in the card config wins. Use it only
+   to pin one card to a language.
+2. Otherwise the card follows the **Home Assistant user's** language, which each
+   user sets in **Profile → Language**. Any code starting with `zh` (`zh-Hans`,
+   `zh-Hant`, `zh-Hans-CN`) selects Chinese; everything else selects English.
+3. Because it is resolved per render, changing the profile language updates every
+   card live — no reload and no config change.
+
+> This is why a shared dashboard reads correctly for an English and a Chinese user
+> at the same time: the language is a property of the viewer, not of the card.
+
+> `hoymiles-gauge` is the exception — it has no built-in wording at all. Every word
+> on it comes from your own `name` / `label` / `icon`, so it never needs translating.
 
 ---
 
@@ -51,7 +67,7 @@ language: zh
 | `dev_id` | string | — | **Required.** |
 | `title` | string | localized *My home* | Heading text. |
 | `show_title` | bool | `true` | `false` hides the title and the device SN, leaving only the signal icon. |
-| `language` | `zh` \| `en` | `en` | UI language. |
+| `language` | `zh` \| `en` | *auto* | Pin the card's language. Omit it to follow the Home Assistant user's language. |
 | `temperature_entity` | entity id | — | Outdoor temperature shown next to the title. |
 | `show_rssi` | bool | `true` | Wi-Fi signal fan in the top-right corner. |
 | `show_extras` | bool | `true` | The *PV2* / *smart plug* chips in the top-left corner. |
@@ -165,7 +181,7 @@ language: zh
 | `dev_id` | string | — | **Required.** |
 | `title` | string | detected model | Overrides the model read from the device registry. |
 | `show_title` | bool | `true` | `false` hides the heading. |
-| `language` | `zh` \| `en` | `en` | UI language. |
+| `language` | `zh` \| `en` | *auto* | Pin the card's language. Omit it to follow the Home Assistant user's language. |
 | `show_history` | bool | `true` | Optional history section (needs the recorder). |
 | `max_width` | number (px) | `560` | Maximum width of the illustration. |
 | `alarm_entity` | entity id | — | Shows a bell next to the title while this entity is `on`. |
@@ -221,7 +237,7 @@ show_temperature: false
 |---|---|---|---|
 | `dev_id` | string | — | **Required.** |
 | `title` | string | localized *Battery* | Heading text. |
-| `language` | `zh` \| `en` | `en` | UI language. |
+| `language` | `zh` \| `en` | *auto* | Pin the card's language. Omit it to follow the Home Assistant user's language. |
 | `columns` | number | `1` | Lay the rows out in N columns. Omit for a single column. |
 | `show_temperature` | bool | `true` | `false` shows SOC only, dropping the ℃ reading. |
 
@@ -256,7 +272,7 @@ series:
 | `series` | list | — | **Required.** One entry per curve: `entity`, `name`, `color`. |
 | `dev_id` | string | — | Optional when every series names an explicit `entity`. |
 | `title` | string | — | Card heading. |
-| `language` | `zh` \| `en` | `en` | UI language. |
+| `language` | `zh` \| `en` | *auto* | Pin the card's language. Omit it to follow the Home Assistant user's language. |
 | `range` | `day` \| `month` \| `year` | `day` | Initial time range. |
 | `height` | number (px) | `330` | SVG height. |
 | `unit` | string | — | Y-axis unit label. Auto-promotes to kW above 1.5 kW. |
@@ -381,7 +397,7 @@ title: 设备控制
 |---|---|---|---|
 | `dev_id` | string | — | **Required.** |
 | `title` | string | localized *Control* | Card heading. |
-| `language` | `zh` \| `en` | `en` | UI language. |
+| `language` | `zh` \| `en` | *auto* | Pin the card's language. Omit it to follow the Home Assistant user's language. |
 | `show_power_ctrl` | bool | `true` | `false` hides the *Power control* row. |
 | `show_phase` | bool | `true` | `false` hides the *Per-phase output power* row. |
 | `show_topics` | bool | `false` | Show the MQTT topic under each row (debugging). |
@@ -432,7 +448,7 @@ language: zh
 |---|---|---|---|
 | `dev_id` | string | — | **Required.** |
 | `title` | string | localized | Card heading. |
-| `language` | `zh` \| `en` | `en` | UI language. |
+| `language` | `zh` \| `en` | *auto* | Pin the card's language. Omit it to follow the Home Assistant user's language. |
 | `require_tou_mode` | bool | `true` | The editor only renders while EMS mode is `tou_plan`. Set `false` to disable that gate. |
 | `ems_entity` | entity id | auto | Override the entity used to read EMS mode. |
 | `status_entity` | entity id | auto | Override the entity used to read the plan status. |
@@ -481,7 +497,7 @@ range: today
 |---|---|---|---|
 | `dev_id` | string | — | **Required.** |
 | `title` | string | localized | Card heading. |
-| `language` | `zh` \| `en` | `en` | UI language. |
+| `language` | `zh` \| `en` | *auto* | Pin the card's language. Omit it to follow the Home Assistant user's language. |
 | `range` | `today` \| `7d` \| `30d` \| `month` | `today` | Time range. |
 | `balancer_label` | string | localized | Name of the *Loss* / *Unmetered* residual node. |
 | `show_toolbar` | bool | `true` | `false` hides the range switcher. |

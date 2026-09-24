@@ -37,7 +37,10 @@ that mirror the layout of the Hoymiles app.
 - **Eight bundled Lovelace cards**, registered as frontend modules automatically, so
   there is no manual "add resource" step. All of them are self-drawn SVG with
   **no CDN and no third-party card** — they work offline.
-- **Bilingual.** Every card accepts `language: zh` or `language: en`.
+- **Follows the UI language.** All eight cards use the language of the Home Assistant
+  user viewing them (`hass.language`), so one dashboard reads correctly for an
+  English and a Chinese user at the same time. Pin a card with `language: en` or
+  `language: zh` only when you need to.
 - **Honest availability.** If the device stops pushing, entities turn `unavailable`
   within 2 minutes instead of showing stale numbers forever.
 
@@ -114,7 +117,6 @@ type: vertical-stack
 cards:
   - type: custom:hoymiles-power-flow
     dev_id: MSA-280520260806
-    language: en
 
   - type: custom:hoymiles-battery
     dev_id: MSA-280520260806
@@ -143,6 +145,11 @@ cards:
         scale: 0.001
         icon: ⚡
 ```
+
+> Neither card sets `language`, so both follow the **viewing user's** UI language.
+> The gauge tiles are the exception — their wording is your own `name`, so write
+> those in whichever language you want. See
+> [docs/CARDS.md](docs/CARDS.md#how-the-language-is-chosen).
 
 Configuring a TOU plan, either way works:
 

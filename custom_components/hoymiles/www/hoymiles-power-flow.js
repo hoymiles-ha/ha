@@ -42,9 +42,9 @@
  * Card config:
  *   type: custom:hoymiles-power-flow
  *   dev_id: MSA-280520260806      # required
- *   title: 我的家                # optional, defaults to the device id
+ *   title: My home                # optional, defaults to the device id
  *   show_title: true              # optional, false hides the title + device id
- *   language: zh                  # optional (en|zh)
+ *   language: en                  # optional (en|zh); omit to follow Home Assistant
  *   temperature_entity: sensor.x  # optional, shown next to the title
  *   gradient: true                # optional light backdrop (default true)
  *   max_width: 620                # optional px, the drawing stays centered
@@ -81,6 +81,22 @@ function _hmPowerFlowRegister() {
   const LitElement = Object.getPrototypeOf(customElements.get("ha-panel-lovelace"));
   const html = LitElement.prototype.html;
   const css = LitElement.prototype.css;
+
+  /* ------------------------------------------------------------------ *
+   * Language
+   *
+   * An explicit `language:` in the card config wins. When it is absent the
+   * card follows the Home Assistant user's language (`hass.language`), so a
+   * dashboard matches the UI without per-card configuration. Any Chinese
+   * variant counts as Chinese - Home Assistant reports `zh-Hans` / `zh-Hant`
+   * and may carry a region suffix such as `zh-Hans-CN`.
+   * ------------------------------------------------------------------ */
+  function hmLang(hass, config) {
+    const wanted = config && config.language;
+    if (wanted) return String(wanted).toLowerCase().startsWith("zh") ? "zh" : "en";
+    const ui = hass && hass.language;
+    return ui && String(ui).toLowerCase().startsWith("zh") ? "zh" : "en";
+  }
 
   /* ------------------------------------------------------------------ *
    * Drawing constants. The SVG uses a fixed viewBox and is scaled by CSS,
@@ -480,7 +496,7 @@ function _hmPowerFlowRegister() {
     }
 
     static getStubConfig() {
-      return { dev_id: "", language: "zh" };
+      return { dev_id: "" };
     }
 
     /**
@@ -584,7 +600,8 @@ function _hmPowerFlowRegister() {
     _signature() {
       const d = this._data();
       return [
-        this._config.language, this._config.gradient, this._config.max_width,
+        hmLang(this._hass, this._config),
+        this._config.gradient, this._config.max_width,
         this._config.title, this._config.show_title, this._config.show_rssi,
         this._config.show_extras, this._config.has_meter,
         this._config.meter_zero_samples, this._config.flow_speed,
@@ -603,7 +620,7 @@ function _hmPowerFlowRegister() {
     /* ----------------------------- lookup ----------------------------- */
 
     _t(en, zh) {
-      return this._config && this._config.language === "zh" ? zh : en;
+      return hmLang(this._hass, this._config) === "zh" ? zh : en;
     }
 
     _dev() {
@@ -1174,8 +1191,8 @@ function _hmPowerFlowRegister() {
             @change=${this._changed("dev_id")}></ha-textfield>
           <ha-textfield label="title" .value=${config.title || ""}
             @change=${this._changed("title")}></ha-textfield>
-          <ha-textfield label="language (en|zh)" .value=${config.language || "zh"}
-            @change=${this._changed("language")}></ha-textfield>
+          <ha-textfield label="language (auto|en|zh, auto follows Home Assistant)"
+            .value=${config.language || ""} @change=${this._changed("language")}></ha-textfield>
           <ha-textfield label="temperature_entity" .value=${config.temperature_entity || ""}
             @change=${this._changed("temperature_entity")}></ha-textfield>
           <ha-textfield label="max_width (px)" .value=${config.max_width || ""}
@@ -1186,18 +1203,18 @@ function _hmPowerFlowRegister() {
           <ha-textfield label="meter_zero_samples (default 10)"
             .value=${config.meter_zero_samples === undefined ? "" : String(config.meter_zero_samples)}
             @change=${this._changed("meter_zero_samples")}></ha-textfield>
-          <ha-textfield label="flow_speed (default 1, 0.5 = 更慢)"
+          <ha-textfield label="flow_speed (default 1, 0.5 = slower)"
             .value=${config.flow_speed === undefined ? "" : String(config.flow_speed)}
             @change=${this._changed("flow_speed")}></ha-textfield>
           <label class="sw">
             <ha-switch .checked=${config.show_title !== false}
               @change=${this._toggle("show_title")}></ha-switch>
-            <span>show_title (标题与设备 SN)</span>
+            <span>show_title (title and device SN)</span>
           </label>
           <label class="sw">
             <ha-switch .checked=${config.show_rssi !== false}
               @change=${this._toggle("show_rssi")}></ha-switch>
-            <span>show_rssi (信号图标)</span>
+            <span>show_rssi (signal icon)</span>
           </label>
         </div>
       `;

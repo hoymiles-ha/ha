@@ -22,7 +22,7 @@
  *   dev_id: MSA-280520260806     # required
  *   title: HiBattery X           # optional, overrides the detected model
  *   show_title: false            # optional, hide the header title
- *   language: zh                 # optional (en|zh)
+ *   language: en                 # optional (en|zh); omit to follow Home Assistant
  *   show_history: true           # optional (default true)
  *   max_width: 560               # optional px for the illustration
  *   alarm_entity: binary_sensor.x # optional, shows a bell when "on"
@@ -42,6 +42,22 @@ function _hmBatteryRegister() {
   const LitElement = Object.getPrototypeOf(customElements.get("ha-panel-lovelace"));
   const html = LitElement.prototype.html;
   const css = LitElement.prototype.css;
+
+  /* ------------------------------------------------------------------ *
+   * Language
+   *
+   * An explicit `language:` in the card config wins. When it is absent the
+   * card follows the Home Assistant user's language (`hass.language`), so a
+   * dashboard matches the UI without per-card configuration. Any Chinese
+   * variant counts as Chinese - Home Assistant reports `zh-Hans` / `zh-Hant`
+   * and may carry a region suffix such as `zh-Hans-CN`.
+   * ------------------------------------------------------------------ */
+  function hmLang(hass, config) {
+    const wanted = config && config.language;
+    if (wanted) return String(wanted).toLowerCase().startsWith("zh") ? "zh" : "en";
+    const ui = hass && hass.language;
+    return ui && String(ui).toLowerCase().startsWith("zh") ? "zh" : "en";
+  }
 
   /* ------------------------------------------------------------------ *
    * Drawing constants
@@ -249,7 +265,7 @@ function _hmBatteryRegister() {
     }
 
     static getStubConfig() {
-      return { dev_id: "", language: "zh" };
+      return { dev_id: "" };
     }
 
     static get styles() {
@@ -347,7 +363,8 @@ function _hmBatteryRegister() {
         packs.push(`${this._read(`pack${i}_soc`, null)}:${this._read(`pack${i}_temperature`, null)}`);
       }
       return [
-        this._config.language, this._config.max_width, this._config.title,
+        hmLang(this._hass, this._config),
+        this._config.max_width, this._config.title,
         this._config.show_title, this._config.alarm_entity, this._range,
         // The model arrives with the device registry, which can load after the
         // first render, so it has to be part of what triggers a rebuild.
@@ -372,7 +389,7 @@ function _hmBatteryRegister() {
     /* ----------------------------- lookup ----------------------------- */
 
     _t(en, zh) {
-      return this._config && this._config.language === "zh" ? zh : en;
+      return hmLang(this._hass, this._config) === "zh" ? zh : en;
     }
 
     _dev() {
@@ -882,13 +899,13 @@ function _hmBatteryRegister() {
         <div class="row">
           <ha-textfield label="dev_id (required)" .value=${config.dev_id || ""}
             @change=${this._changed("dev_id")}></ha-textfield>
-          <ha-textfield label="title (默认用设备型号)" .value=${config.title || ""}
+          <ha-textfield label="title (defaults to the device model)" .value=${config.title || ""}
             @change=${this._changed("title")}></ha-textfield>
-          <ha-textfield label="show_title (false = 隐藏标题)"
+          <ha-textfield label="show_title (false = hide the heading)"
             .value=${config.show_title === false ? "false" : ""}
             @change=${this._changed("show_title")}></ha-textfield>
-          <ha-textfield label="language (en|zh)" .value=${config.language || "zh"}
-            @change=${this._changed("language")}></ha-textfield>
+          <ha-textfield label="language (auto|en|zh, auto follows Home Assistant)"
+            .value=${config.language || ""} @change=${this._changed("language")}></ha-textfield>
           <ha-textfield label="max_width (px)" .value=${config.max_width || ""}
             @change=${this._changed("max_width")}></ha-textfield>
           <ha-textfield label="alarm_entity" .value=${config.alarm_entity || ""}

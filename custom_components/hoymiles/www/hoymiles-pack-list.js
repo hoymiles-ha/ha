@@ -10,8 +10,8 @@
  * Card config:
  *   type: custom:hoymiles-pack-list
  *   dev_id: MSA-280520260806
- *   language: zh
- *   title: 电池包
+ *   language: en               # optional (en|zh); omit to follow Home Assistant
+ *   title: Battery packs
  *   columns: 2                 # optional, lay the rows out in N columns
  *   show_temperature: false    # optional; hide the ℃ reading (SOC only)
  * ========================================================================== */
@@ -20,6 +20,22 @@ function _hmPackListRegister() {
   const LitElement = Object.getPrototypeOf(customElements.get("ha-panel-lovelace"));
   const html = LitElement.prototype.html;
   const css = LitElement.prototype.css;
+
+  /* ------------------------------------------------------------------ *
+   * Language
+   *
+   * An explicit `language:` in the card config wins. When it is absent the
+   * card follows the Home Assistant user's language (`hass.language`), so a
+   * dashboard matches the UI without per-card configuration. Any Chinese
+   * variant counts as Chinese - Home Assistant reports `zh-Hans` / `zh-Hant`
+   * and may carry a region suffix such as `zh-Hans-CN`.
+   * ------------------------------------------------------------------ */
+  function hmLang(hass, config) {
+    const wanted = config && config.language;
+    if (wanted) return String(wanted).toLowerCase().startsWith("zh") ? "zh" : "en";
+    const ui = hass && hass.language;
+    return ui && String(ui).toLowerCase().startsWith("zh") ? "zh" : "en";
+  }
 
   const PACK_MAX = 4;
 
@@ -64,7 +80,7 @@ function _hmPackListRegister() {
     }
 
     static getStubConfig() {
-      return { dev_id: "", language: "zh", title: "电池包" };
+      return { dev_id: "" };
     }
 
     static get styles() {
@@ -111,7 +127,7 @@ function _hmPackListRegister() {
     /* ----------------------------- lookups ----------------------------- */
 
     _t(en, zh) {
-      return this._config && this._config.language === "zh" ? zh : en;
+      return hmLang(this._hass, this._config) === "zh" ? zh : en;
     }
 
     _dev() {
@@ -274,12 +290,12 @@ function _hmPackListRegister() {
             @change=${this._changed("title")}></ha-textfield>
           <ha-textfield label="columns" .value=${config.columns || "1"}
             @change=${this._changed("columns")}></ha-textfield>
-          <ha-textfield label="language (en|zh)" .value=${config.language || "zh"}
-            @change=${this._changed("language")}></ha-textfield>
+          <ha-textfield label="language (auto|en|zh, auto follows Home Assistant)"
+            .value=${config.language || ""} @change=${this._changed("language")}></ha-textfield>
           <label class="sw">
             <ha-switch .checked=${config.show_temperature !== false}
               @change=${this._toggle("show_temperature")}></ha-switch>
-            <span>show_temperature (显示 ℃)</span>
+            <span>show_temperature (show the ℃ reading)</span>
           </label>
         </div>
       `;

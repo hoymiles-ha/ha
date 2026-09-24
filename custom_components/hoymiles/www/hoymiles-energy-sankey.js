@@ -26,7 +26,7 @@
  *   type: custom:hoymiles-energy-sankey
  *   dev_id: MSA-280520260806      # required
  *   title: Energy flow            # optional
- *   language: zh                  # optional (en|zh)
+ *   language: en                  # optional (en|zh); omit to follow Home Assistant
  *   range: today                  # optional (today|7d|30d|month)
  *   balancer_label: Loss          # optional label for the residual node
  *   show_toolbar: true            # optional
@@ -58,6 +58,22 @@ function _hmSankeyRegister() {
   const LitElement = Object.getPrototypeOf(customElements.get("ha-panel-lovelace"));
   const html = LitElement.prototype.html;
   const css = LitElement.prototype.css;
+
+  /* ------------------------------------------------------------------ *
+   * Language
+   *
+   * An explicit `language:` in the card config wins. When it is absent the
+   * card follows the Home Assistant user's language (`hass.language`), so a
+   * dashboard matches the UI without per-card configuration. Any Chinese
+   * variant counts as Chinese - Home Assistant reports `zh-Hans` / `zh-Hant`
+   * and may carry a region suffix such as `zh-Hans-CN`.
+   * ------------------------------------------------------------------ */
+  function hmLang(hass, config) {
+    const wanted = config && config.language;
+    if (wanted) return String(wanted).toLowerCase().startsWith("zh") ? "zh" : "en";
+    const ui = hass && hass.language;
+    return ui && String(ui).toLowerCase().startsWith("zh") ? "zh" : "en";
+  }
 
   /* ------------------------------------------------------------------ *
    * Layout constants — the SVG uses a fixed viewBox and is scaled by CSS,
@@ -353,7 +369,7 @@ function _hmSankeyRegister() {
     }
 
     static getStubConfig() {
-      return { dev_id: "", language: "zh", range: DEFAULT_RANGE };
+      return { dev_id: "", range: DEFAULT_RANGE };
     }
 
     static get styles() {
@@ -434,7 +450,7 @@ function _hmSankeyRegister() {
 
     /* --------------------------- text / config --------------------------- */
 
-    _t(en, zh) { return this._config && this._config.language === "zh" ? zh : en; }
+    _t(en, zh) { return hmLang(this._hass, this._config) === "zh" ? zh : en; }
     _dev() { return this._config.dev_id; }
 
     _label(def) { return this._t(def.en, def.zh); }
@@ -1044,8 +1060,8 @@ function _hmSankeyRegister() {
             @change=${this._valueChanged("dev_id")}></ha-textfield>
           <ha-textfield label="title" .value=${config.title || ""}
             @change=${this._valueChanged("title")}></ha-textfield>
-          <ha-textfield label="language (en|zh)" .value=${config.language || "zh"}
-            @change=${this._valueChanged("language")}></ha-textfield>
+          <ha-textfield label="language (auto|en|zh, auto follows Home Assistant)"
+            .value=${config.language || ""} @change=${this._valueChanged("language")}></ha-textfield>
           <ha-textfield label="range (${ranges.join("|")})" .value=${config.range || DEFAULT_RANGE}
             @change=${this._valueChanged("range")}></ha-textfield>
           <ha-textfield label="balancer_label" .value=${config.balancer_label || ""}

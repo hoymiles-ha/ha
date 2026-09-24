@@ -365,20 +365,20 @@ function _hmGaugeRegister() {
             @change=${this._changed("max")}></ha-textfield>
           <ha-textfield label="icon (emoji)" .value=${config.icon || ""}
             @change=${this._changed("icon")}></ha-textfield>
-          <ha-textfield label="label (百分比下的说明)" .value=${config.label || ""}
+          <ha-textfield label="label (caption under the percentage)" .value=${config.label || ""}
             @change=${this._changed("label")}></ha-textfield>
           <ha-textfield label="color (default #22c55e)" .value=${config.color || ""}
             @change=${this._changed("color")}></ha-textfield>
-          <ha-textfield label="show_arc (false = 不要弧线和百分比）"
+          <ha-textfield label="show_arc (false = drop the arc and its percentage)"
             .value=${config.show_arc === false ? "false" : ""}
             @change=${this._changed("show_arc")}></ha-textfield>
-          <ha-textfield label="percent_numerator (弧线百分比的分子)"
+          <ha-textfield label="percent_numerator (numerator of the arc percentage)"
             .value=${config.percent_numerator || ""}
             @change=${this._changed("percent_numerator")}></ha-textfield>
-          <ha-textfield label="percent_subtract (可选，从分子减掉)"
+          <ha-textfield label="percent_subtract (optional, taken off the numerator)"
             .value=${config.percent_subtract || ""}
             @change=${this._changed("percent_subtract")}></ha-textfield>
-          <ha-textfield label="percent_denominator (可选，默认=分子)"
+          <ha-textfield label="percent_denominator (optional, defaults to the numerator)"
             .value=${config.percent_denominator || ""}
             @change=${this._changed("percent_denominator")}></ha-textfield>
         </div>

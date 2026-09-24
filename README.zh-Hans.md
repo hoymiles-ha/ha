@@ -32,7 +32,9 @@
   `tou_plan` —— 原生 options 向导和可视化卡片两条路都可以。
 - **八张捆绑卡片**，集成启动时自动注册为前端模块，**无需手动添加资源**。
   全部自绘 SVG，**不依赖 CDN、不依赖第三方卡片**，离线可用。
-- **中英双语。** 每张卡片都支持 `language: zh` / `language: en`。
+- **跟随界面语言。** 八张卡片都使用**当前登录用户**的语言（`hass.language`），
+  所以同一个仪表盘对英文用户和中文用户都能正确显示，无需为每人复制一份。
+  只有需要把某张卡片钉死语言时才写 `language: en` / `language: zh`。
 - **诚实的可用性判定。** 设备停止推送 2 分钟内实体转为 `unavailable`，
   而不是一直展示陈旧值。
 
@@ -106,7 +108,6 @@ type: vertical-stack
 cards:
   - type: custom:hoymiles-power-flow
     dev_id: MSA-280520260806
-    language: zh
 
   - type: custom:hoymiles-battery
     dev_id: MSA-280520260806
@@ -135,6 +136,10 @@ cards:
         scale: 0.001
         icon: ⚡
 ```
+
+> 上面两张卡都没有写 `language`，因此都跟随**查看者自己的**界面语言。仪表盘卡片是例外 ——
+> 它的文字来自你填的 `name`，想显示哪种语言就填哪种。详见
+> [docs/CARDS.zh-Hans.md](docs/CARDS.zh-Hans.md#语言是怎么选的)。
 
 配置 TOU 计划，两条路效果一致：
 
