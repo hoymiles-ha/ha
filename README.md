@@ -56,26 +56,6 @@ that mirror the layout of the Hoymiles app.
 
 ---
 
-## Screenshots
-
-| Home power flow | Battery stack |
-|:---:|:---:|
-| <img src="docs/images/power-flow.png" width="380"> | <img src="docs/images/battery.png" width="260"> |
-
-| Battery pack list | Gauge tiles |
-|:---:|:---:|
-| <img src="docs/images/pack-list.png" width="360"> | <img src="docs/images/gauge.png" width="420"> |
-
-| History chart | Control panel |
-|:---:|:---:|
-| <img src="docs/images/history-chart.png" width="400"> | <img src="docs/images/control.png" width="330"> |
-
-| TOU plan editor |
-|:---:|
-| <img src="docs/images/tou-editor.png" width="420"> |
-
----
-
 ## Installation
 
 ### Option A — HACS (recommended)
@@ -290,8 +270,7 @@ hoymiles-ha/
 ├── DEPLOY.md                     release / maintenance runbook
 ├── docs/
 │   ├── CARDS.md                  full card option reference
-│   ├── ARCHITECTURE.md           MQTT topics, discovery patches, entity model
-│   └── images/                   screenshots used above
+│   └── ARCHITECTURE.md           MQTT topics, discovery patches, entity model
 ├── scripts/                      brand artwork generator
 └── custom_components/hoymiles/
     ├── __init__.py               entry point / frontend asset registration

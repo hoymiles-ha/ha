@@ -32,8 +32,7 @@
 │   ├── CARDS.md                      # 八张卡片参数总表
 │   ├── CARDS.zh-Hans.md              #   中文版
 │   ├── ARCHITECTURE.md               # MQTT 话题 / discovery 补丁 / 实体模型
-│   ├── ARCHITECTURE.zh-Hans.md       #   中文版
-│   └── images/                       # README 引用的界面截图
+│   └── ARCHITECTURE.zh-Hans.md       #   中文版
 ├── scripts/
 │   ├── brand-source.png              # 官方 logo 原始稿（设计源，不随集成下发）
 │   ├── make_brand_from_official.ps1  # ★ 从官方 logo 生成 icon.png + logo.png

@@ -50,26 +50,6 @@
 
 ---
 
-## 界面截图
-
-| 家居功率流 | 电池堆 |
-|:---:|:---:|
-| <img src="docs/images/power-flow.png" width="380"> | <img src="docs/images/battery.png" width="260"> |
-
-| 电池包列表 | 仪表盘 |
-|:---:|:---:|
-| <img src="docs/images/pack-list.png" width="360"> | <img src="docs/images/gauge.png" width="420"> |
-
-| 历史曲线 | 控制面板 |
-|:---:|:---:|
-| <img src="docs/images/history-chart.png" width="400"> | <img src="docs/images/control.png" width="330"> |
-
-| 分时计划编辑器 |
-|:---:|
-| <img src="docs/images/tou-editor.png" width="420"> |
-
----
-
 ## 安装
 
 ### 方式 A：HACS（推荐）
@@ -278,8 +258,7 @@ hoymiles-ha/
 ├── DEPLOY.md                     发版 / 维护手册
 ├── docs/
 │   ├── CARDS.md                  卡片参数总表
-│   ├── ARCHITECTURE.md           MQTT 话题、discovery 补丁、实体模型
-│   └── images/                   上方截图
+│   └── ARCHITECTURE.md           MQTT 话题、discovery 补丁、实体模型
 ├── scripts/                      品牌图生成脚本
 └── custom_components/hoymiles/
     ├── __init__.py               入口 / 前端资源注册
