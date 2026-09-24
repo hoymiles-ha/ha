@@ -355,6 +355,10 @@ color: "#22c55e"          # 可选，弧线颜色（默认绿色）
 指令**直接发布到协议 topic**（qos 1、retain false），因此即使某个 discovery 实体缺失
 或选项列表比协议窄，卡片也仍可用；当前值则从对应实体回读。
 
+布局参考 iOS 设置页：小组件包在圆角分组里、组间有灰色小节标题（**电源与模式 /
+功率设置 / 计划与维护**）、每行是「图标 + 名称 + 右侧控件」，分割线**左侧内缩**；
+开关机与 EMS 模式用**分段控件**，危险操作（重启）用红色。
+
 ```yaml
 type: custom:hoymiles-control
 dev_id: MSA-280520260806
@@ -362,6 +366,8 @@ language: zh
 title: 设备控制
 show_power_ctrl: true     # 可选，默认 true（隐藏「功率控制」行）
 show_phase: true          # 可选，默认 true（隐藏「多相输出功率」行）
+show_topics: true         # 可选，默认 false；在每行下方显示 MQTT 主题（调试用）
+subtitle: false           # 可选；隐藏标题右侧的灰色说明
 ```
 
 | 行 | 协议 topic | 说明 |
@@ -376,6 +382,8 @@ show_phase: true          # 可选，默认 true（隐藏「多相输出功率�
 
 > 卡片的范围提示（如 `-1000 ~ 1000 W`）优先读实体的 `min` / `max` 属性，
 > 读不到时用协议默认值。
+> 每行的 MQTT topic **默认不显示**（它们是调试信息，会挤掉正文）；需要时用
+> `show_topics: true` 打开，会以灰色小字排在名称下方。
 
 ---
 
