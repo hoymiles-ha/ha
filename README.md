@@ -43,6 +43,12 @@ that mirror the layout of the Hoymiles app.
   give `title` / `name` / `label` a map (`{en: History, zh: 历史数据}`) instead of a
   string. See [docs/CARDS.md](docs/CARDS.md#making-your-own-text-follow-the-language-too).
   Pin a card with `language: en` / `language: zh` only when you need to.
+
+> Home Assistant's own text - the `markdown` card and the **view/tab titles** - has no
+> per-user language, so it cannot follow along. Write those bilingually
+> (`System status / 系统状态`) or keep them language-neutral. Also note that a view with
+> an `icon` shows **only the icon** unless you set `show_icon_and_title: true`.
+> See [docs/CARDS.md](docs/CARDS.md#why-the-view-tabs-cannot-follow-the-language).
 - **Honest availability.** If the device stops pushing, entities turn `unavailable`
   within 2 minutes instead of showing stale numbers forever.
 

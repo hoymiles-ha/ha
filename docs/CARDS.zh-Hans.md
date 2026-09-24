@@ -81,6 +81,34 @@ series:
 > Home Assistant 自带的卡片（`markdown`）以及视图 / 页签标题属于 HA 本身、不属于本集成，
 > 它们的文字无法跟随语言。请把这些写成语言无关的内容，或者为它们统一选一种语言。
 
+### 为什么视图页签无法跟随语言
+
+HA 从 `view.title` 取页签文字，**完全没有本地化环节**：
+
+```js
+// home-assistant/frontend - src/data/lovelace/config/view.ts
+computeViewTitle = (view, index) => view.title ?? (view.path ? titleCase(view.path) : String(index));
+```
+
+对比 HA 内置的能源面板：它是靠 **strategy** 生成视图、在 JS 里调
+`hass.localize(...)` 才让页签跟着语言的。代价是整个视图都由 JS 生成，
+只为了一行标签把仪表盘绑上去并不划算。
+
+由此有两件很容易踩错的事：
+
+1. **`view.title` 是固定字符串**，没有按用户变化的语言。想让两种语言的用户都看得对，
+   就写成双语 —— 例如 `System status / 系统状态`；或者改用视图内部的语言无关标题
+   （emoji + 设备 SN）。
+2. **写了 `icon` 就会把标题藏掉**。除非显式要求两者都要，否则 HA 只渲染图标**或**标题：
+
+   ```js
+   const icon_and_title = view.show_icon_and_title && view.icon && view.title;
+   const icon_only = view.icon && !icon_and_title;
+   ```
+
+   所以「有 `icon` 但没有 `show_icon_and_title: true`」的视图**只显示图标**，
+   标题只残留在悬停提示里。想同时看到图标和文字就得加这个开关。
+
 ---
 
 ## 1. `custom:hoymiles-power-flow`

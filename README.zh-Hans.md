@@ -38,6 +38,11 @@
   （`{en: History, zh: 历史数据}`）而不是字符串即可，详见
   [docs/CARDS.zh-Hans.md](docs/CARDS.zh-Hans.md#让自己写的文字也跟随语言)。
   只有需要把某张卡片钉死语言时才写 `language: en` / `language: zh`。
+
+> Home Assistant 自己的文字（`markdown` 卡片、**视图 / 页签标题**）没有按用户变化的语言，
+> 无法跟随。请写成双语（`System status / 系统状态`）或语言无关的内容。另注意：
+> 视图一旦写了 `icon`，除非显式加 `show_icon_and_title: true`，否则**只会显示图标**。
+> 详见 [docs/CARDS.zh-Hans.md](docs/CARDS.zh-Hans.md#为什么视图页签无法跟随语言)。
 - **诚实的可用性判定。** 设备停止推送 2 分钟内实体转为 `unavailable`，
   而不是一直展示陈旧值。
 

@@ -89,6 +89,39 @@ Supported on these options:
 > to this integration, so their text cannot follow the language. Keep those
 > language-neutral, or pick one language for them.
 
+### Why the view tabs cannot follow the language
+
+Home Assistant resolves a view's tab label from `view.title` **without any
+localization**:
+
+```js
+// home-assistant/frontend - src/data/lovelace/config/view.ts
+computeViewTitle = (view, index) => view.title ?? (view.path ? titleCase(view.path) : String(index));
+```
+
+Contrast with HA's built-in Energy panel, which localizes its own tab titles by
+generating the view from a *strategy* (`hass.localize(...)`) - a mechanism that
+needs the whole view to come from JavaScript, so it is not worth coupling a
+dashboard to it just for a label.
+
+Two things follow, both easy to get wrong:
+
+1. **A `view.title` is a fixed string.** There is no per-user language for it. If
+   you want text that reads correctly for both audiences, write it bilingually -
+   for example `System status / 系统状态`. A neutral heading inside the view
+   (emoji + device SN) is the other option.
+2. **Setting `icon` hides the title.** HA renders *either* the icon *or* the title
+   unless you ask for both:
+
+   ```js
+   const icon_and_title = view.show_icon_and_title && view.icon && view.title;
+   const icon_only = view.icon && !icon_and_title;
+   ```
+
+   So a view with an `icon` but no `show_icon_and_title: true` shows **only the
+   icon** - the title survives merely as a tooltip. Add the flag when you want the
+   icon and the label side by side.
+
 ---
 
 ## 1. `custom:hoymiles-power-flow`
