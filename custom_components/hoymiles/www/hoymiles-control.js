@@ -50,6 +50,17 @@ function _hmControlRegister() {
   ];
   const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+  /* Order in which the firmware publishes its `number` discovery configs. HA
+   * decorates the duplicate entity ids with `_2`, `_3`, ... so this order is
+   * what maps `number.<dev>_2` back to `output_power`. */
+  const NUMBER_ORDER = ["power_ctrl", "output_power", "phase_output_power"];
+
+  /* Domains where the firmware publishes exactly one entity, so "the only one on
+   * this device" is a sound answer. The number domain is excluded on purpose:
+   * it has several entities and a wrong pick would show - and send - the value
+   * of a different setting. */
+  const SINGLE_ENTITY_DOMAINS = ["select", "switch"];
+
   const PING_MS = 8000; // how long the "sent" confirmation stays visible
 
   function slug(id) {
@@ -186,16 +197,50 @@ function _hmControlRegister() {
         .btn.danger { background: none; color: var(--error-color); padding: 8px 10px; }
         .btn:disabled { opacity: .45; cursor: not-allowed; }
 
-        input {
-          font: inherit; font-size: 15px; width: 88px; text-align: right;
+        /* editable read-out next to a slider */
+        input[type="number"] {
+          font: inherit; font-size: 15px; width: 78px; text-align: right;
           padding: 7px 10px; border-radius: 10px;
           border: 1px solid transparent;
           background: var(--card-background-color, #fff);
           color: var(--primary-text-color); outline: none;
           font-variant-numeric: tabular-nums;
         }
-        input:focus { border-color: var(--primary-color); }
-        input.narrow { width: 62px; }
+        input[type="number"]:focus { border-color: var(--primary-color); }
+        input[type="number"].narrow { width: 58px; }
+
+        /* iOS slider: hairline track with a tinted fill and a white round knob.
+           The --pct custom property is set inline from the value, so the fill
+           follows the knob without needing a second element.
+           NOTE: never write a backtick inside this css template (not even in a
+           comment) - it would terminate the template string. */
+        .slider { display: flex; align-items: center; gap: 10px; width: 100%; }
+        .slider.end { justify-content: flex-end; }
+        .slider .tag { flex: 0 0 auto; width: 12px; font-size: 13px;
+                       color: var(--secondary-text-color); }
+        input[type="range"] {
+          -webkit-appearance: none;
+          appearance: none;
+          flex: 1 1 auto; min-width: 90px; height: 4px; margin: 0;
+          border-radius: 2px; outline: none; cursor: pointer;
+          background: linear-gradient(90deg,
+            var(--primary-color) 0 var(--pct, 0%),
+            var(--divider-color) var(--pct, 0%) 100%);
+        }
+        input[type="range"]::-webkit-slider-thumb {
+          -webkit-appearance: none; appearance: none;
+          width: 22px; height: 22px; border-radius: 50%;
+          background: #fff; border: none; cursor: grab;
+          box-shadow: 0 1px 4px rgba(0,0,0,.25), 0 0 0 .5px rgba(0,0,0,.08);
+        }
+        input[type="range"]::-webkit-slider-thumb:active { cursor: grabbing; }
+        input[type="range"]::-moz-range-thumb {
+          width: 22px; height: 22px; border-radius: 50%;
+          background: #fff; border: none;
+          box-shadow: 0 1px 4px rgba(0,0,0,.25);
+        }
+        input[type="range"]:disabled { opacity: .45; cursor: not-allowed; }
+        input[type="range"]:disabled::-webkit-slider-thumb { cursor: not-allowed; }
         select {
           font: inherit; font-size: 15px; padding: 7px 10px;
           border-radius: 10px; border: 1px solid transparent;
@@ -286,6 +331,48 @@ function _hmControlRegister() {
         }
       }
 
+      // The firmware's own number entities are unhelpfully named: the MQTT
+      // discovery topics carry the object id (power_ctrl / output_power /
+      // phase_output_power) but HA names all three after the device, so their
+      // entity ids collapse to `number.<dev>`, `number.<dev>_2`, `_3 ...` and
+      // neither the friendly name nor the registry snapshot distinguishes them
+      // (HA does not expose unique_id to the frontend). They are published in a
+      // fixed order, so fall back to the index. `entities` in the card config
+      // overrides this when a deployment ever differs.
+      if (!found && domain === "number") {
+        const index = NUMBER_ORDER.indexOf(key);
+        if (index >= 0) {
+          const base = `${domain}.${slug(this._dev())}`;
+          // `number.<dev>`, `number.<dev>_2`, `number.<dev>_3`, ...
+          // The device SN is numeric too, so the duplicate suffix must be short
+          // (`_2`), never the SN itself (`number.<dev>_280520260806`).
+          const numbered = Object.keys(hass.states).filter((entityId) => {
+            if (entityId === base) return true;
+            return new RegExp(`^${base.replace(/\./g, "\\.")}_\\d{1,2}$`).test(entityId);
+          });
+          const order = (entityId) => {
+            if (entityId === base) return 0;
+            const m = entityId.match(/_(\d+)$/);
+            return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+          };
+          numbered.sort((a, b) => order(a) - order(b));
+          if (numbered[index]) found = numbered[index];
+        }
+      }
+
+      // Last resort for the single-instance domains: the discovery name does not
+      // always map back to the protocol key (`ems_mode` is published as
+      // `select.<dev>_mqtt_select`, and the switch as `<dev>_mqtt_switch`). Those
+      // domains carry exactly one entity per device, so there is nothing to guess.
+      // `number` is deliberately excluded - it has several entities and a wrong
+      // pick would display (and send) a different setting's value.
+      if (!found && SINGLE_ENTITY_DOMAINS.includes(domain)) {
+        const prefix = `${domain}.${slug(this._dev())}`;
+        const candidates = Object.keys(hass.states)
+          .filter((entityId) => entityId.startsWith(prefix));
+        if (candidates.length === 1) found = candidates[0];
+      }
+
       if (found) this._cache.set(cacheKey, found);
       return found;
     }
@@ -314,19 +401,35 @@ function _hmControlRegister() {
       return `homeassistant/${suffix.replace("<dev_id>", this._dev())}`;
     }
 
-    /** Pre-fill the inputs from the device the first time we see it. */
+    /** Pre-fill the inputs from the device the first time we see it.
+     *
+     * Values are clamped to the entity's own range: an unconfigured entity often
+     * reports `0`, which is outside e.g. output_power's `100 ~ 2000 W`. Without
+     * the clamp the slider would sit at its minimum while the read-out showed the
+     * out-of-range number, and the two would disagree.
+     */
     _seedInputs() {
       if (!this._hass || !this._hass.states) return;
       const pc = this._number("power_ctrl");
       const op = this._number("output_power");
-      if (pc != null) this._powerCtrl = String(pc);
-      if (op != null) this._outputPower = String(op);
+      if (pc != null) {
+        const b = this._bounds("power_ctrl", -1000, 1000);
+        this._powerCtrl = String(this._clamp(pc, b.lo, b.hi));
+      }
+      if (op != null) {
+        const b = this._bounds("output_power", 100, 2000);
+        this._outputPower = String(this._clamp(op, b.lo, b.hi));
+      }
       const phases = ["a", "b", "c"];
       let any = false;
       for (const p of phases) {
         const value = this._number(`phase_${p}_output_power`)
           ?? this._number("phase_output_power");
-        if (value != null) { this._phase[p] = String(value); any = true; }
+        if (value != null) {
+          const b = this._bounds("phase_a_output_power", 100, 2500);
+          this._phase[p] = String(this._clamp(value, b.lo, b.hi));
+          any = true;
+        }
       }
       if (pc == null && op == null && !any) return; // nothing to seed yet
       this._initialised = true;
@@ -509,6 +612,60 @@ function _hmControlRegister() {
         </div>`;
     }
 
+    /**
+     * iOS slider row: track on the left, editable read-out on the right.
+     *
+     * The track keeps `--pct` in sync with the value so the tinted fill follows
+     * the knob without a second element. Dragging only updates the draft value;
+     * nothing is published until the send button is pressed (the power values
+     * have to be re-sent every minute, so publishing on every input event would
+     * flood the broker).
+     */
+    _slider({ value, min, max, step, unit, tag, disabled, onInput, onSend, sendLabel }) {
+      const lo = num(min);
+      const hi = num(max);
+      const current = Number(value);
+      const safe = Number.isFinite(current) ? current : lo;
+      const span = hi - lo;
+      // Clamp only the tinted fill; the read-out keeps whatever was typed.
+      const pct = span > 0 ? Math.min(Math.max((safe - lo) / span, 0), 1) * 100 : 0;
+      const decimals = step != null && Number(step) < 1 ? 1 : 0;
+
+      return html`
+        <div class="slider">
+          ${tag ? html`<span class="tag">${tag}</span>` : ""}
+          <input type="range" min=${lo} max=${hi} step=${step}
+            .value=${String(safe)} ?disabled=${disabled}
+            style="--pct:${pct.toFixed(1)}%"
+            @input=${(e) => onInput(e.target.value)} />
+          <input type="number" min=${lo} max=${hi} step=${step}
+            .value=${String(Number.isFinite(current) ? current : "")}
+            ?disabled=${disabled}
+            @input=${(e) => onInput(e.target.value)} />
+          <span class="unit">${unit}</span>
+          ${onSend ? html`
+            <button class="btn primary" ?disabled=${disabled}
+              @click=${onSend}>${sendLabel}</button>` : ""}
+        </div>`;
+    }
+
+    /** Slider bounds for a numeric entity, with the protocol defaults. */
+    _bounds(key, fallbackLo, fallbackHi) {
+      const rawLo = this._attr(key, "number", "min");
+      const rawHi = this._attr(key, "number", "max");
+      const lo = rawLo != null ? num(rawLo) : fallbackLo;
+      const hi = rawHi != null ? num(rawHi) : fallbackHi;
+      // A degenerate range would divide by zero in the fill calculation.
+      return hi > lo ? { lo, hi } : { lo: fallbackLo, hi: fallbackHi };
+    }
+
+    /** Keep a value inside a range (invalid input falls back to the low bound). */
+    _clamp(value, lo, hi) {
+      const v = num(value);
+      if (!Number.isFinite(v)) return lo;
+      return Math.min(Math.max(v, lo), hi);
+    }
+
     _switchItem() {
       const on = this._isSwitchOn();
       return this._item({
@@ -552,65 +709,79 @@ function _hmControlRegister() {
 
     _powerCtrlItem() {
       const ready = this._emsMode() === "mqtt_ctrl";
-      const min = this._attr("power_ctrl", "number", "min");
-      const max = this._attr("power_ctrl", "number", "max");
-      const range = min != null && max != null ? `${min} ~ ${max} W` : "-1000 ~ 1000 W";
+      const { lo, hi } = this._bounds("power_ctrl", -1000, 1000);
       return this._item({
         icon: "🎛",
         name: this._t("Power control", "功率控制"),
-        sub: this._t(
-          `${range}, re-send at least once a minute`,
-          `${range}，需至少每分钟下发一次`,
-        ),
+        sub: ready
+          ? this._t(
+            `${lo} ~ ${hi} W, re-send at least once a minute`,
+            `${lo} ~ ${hi} W，需至少每分钟下发一次`,
+          )
+          : this._t("switch EMS to mqtt_ctrl first", "需先切到 mqtt_ctrl"),
         topic: this._topic("number/<dev_id>/power_ctrl/set"),
-        ctrl: html`
-          <input type="number" step="0.1" .value=${this._powerCtrl}
-            @input=${(e) => { this._powerCtrl = e.target.value; }} />
-          <span class="unit">W</span>
-          <button class="btn primary" ?disabled=${!ready}
-            @click=${() => this._sendPowerCtrl()}>${this._t("Send", "下发")}</button>
-          ${ready ? "" : html`<span class="state">${this._t(
-            "requires mqtt_ctrl", "需先切到 mqtt_ctrl")}</span>`}`,
+        stack: true,
+        ctrl: this._slider({
+          value: this._powerCtrl,
+          min: lo,
+          max: hi,
+          step: 0.1,
+          unit: "W",
+          disabled: !ready,
+          sendLabel: this._t("Send", "下发"),
+          onInput: (v) => { this._powerCtrl = v; },
+          onSend: () => this._sendPowerCtrl(),
+        }),
       });
     }
 
     _outputItem() {
-      const min = this._attr("output_power", "number", "min");
-      const max = this._attr("output_power", "number", "max");
-      const range = min != null && max != null ? `${min} ~ ${max} W` : "100 ~ 2000 W";
+      const { lo, hi } = this._bounds("output_power", 100, 2000);
       return this._item({
         icon: "📤",
         name: this._t("Output power", "输出功率"),
-        sub: this._t(`Range ${range}.`, `范围 ${range}。`),
+        sub: this._t(`Range ${lo} ~ ${hi} W.`, `范围 ${lo} ~ ${hi} W。`),
         topic: this._topic("number/<dev_id>/output_power/set"),
-        ctrl: html`
-          <input type="number" step="1" .value=${this._outputPower}
-            @input=${(e) => { this._outputPower = e.target.value; }} />
-          <span class="unit">W</span>
-          <button class="btn primary"
-            @click=${() => this._sendOutputPower()}>${this._t("Send", "下发")}</button>`,
+        stack: true,
+        ctrl: this._slider({
+          value: this._outputPower,
+          min: lo,
+          max: hi,
+          step: 1,
+          unit: "W",
+          sendLabel: this._t("Send", "下发"),
+          onInput: (v) => { this._outputPower = v; },
+          onSend: () => this._sendOutputPower(),
+        }),
       });
     }
 
     _phaseItem() {
-      const min = this._attr("phase_a_output_power", "number", "min");
-      const max = this._attr("phase_a_output_power", "number", "max");
-      const range = min != null && max != null ? `${min} ~ ${max} W` : "100 ~ 2500 W";
-      const field = (key, label) => html`
-        <span class="state">${label}</span>
-        <input class="narrow" type="number" step="1" .value=${this._phase[key]}
-          @input=${(e) => { this._phase = { ...this._phase, [key]: e.target.value }; }} />`;
+      const { lo, hi } = this._bounds("phase_a_output_power", 100, 2500);
+      const row = (key, label) => this._slider({
+        tag: label,
+        value: this._phase[key],
+        min: lo,
+        max: hi,
+        step: 1,
+        unit: "W",
+        onInput: (v) => { this._phase = { ...this._phase, [key]: v }; },
+      });
       return this._item({
         icon: "🔌",
         name: this._t("Phase output", "多相输出功率"),
-        sub: this._t(`Range ${range}.`, `范围 ${range}。`),
+        sub: this._t(
+          `Range ${lo} ~ ${hi} W, sent as {phase_a, phase_b, phase_c}.`,
+          `范围 ${lo} ~ ${hi} W，按 {phase_a, phase_b, phase_c} 下发。`,
+        ),
         topic: this._topic("number/<dev_id>/phase_output_power/set"),
         stack: true,
         ctrl: html`
-          ${field("a", "A")}${field("b", "B")}${field("c", "C")}
-          <span class="unit">W</span>
-          <button class="btn primary"
-            @click=${() => this._sendPhase()}>${this._t("Send", "下发")}</button>`,
+          ${row("a", "A")}${row("b", "B")}${row("c", "C")}
+          <div class="slider end">
+            <button class="btn primary"
+              @click=${() => this._sendPhase()}>${this._t("Send", "下发")}</button>
+          </div>`,
       });
     }
 
