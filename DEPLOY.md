@@ -553,6 +553,76 @@ powershell -ExecutionPolicy Bypass -File scripts\make_brand_icon.ps1
 
 排查统计是否存在：**开发者工具 → 统计**（Developer Tools → Statistics）。
 
+### 5.6 HACS 列表里的图标是灰色占位框
+
+**不是本仓库的问题，是 HACS 的已知缺陷，无需改我们的文件。**
+
+现象：**HACS 仓库列表**里我们的条目显示灰色占位图，但
+**HA 自己的「设备与服务 / 添加集成」**页面图标完全正常。
+
+原因（已核对 HACS 2.0.5 源码与前端 bundle）：
+
+1. HACS 前端只按 CDN 拼 URL：
+   `https://brands.home-assistant.io/_/<domain>/icon.png`。
+   整个 HACS 前端 bundle 里 **搜不到 `api/brands`**，即它**不读** HA 2026.3+
+   的本地品牌图接口。
+2. CDN 上的图来自 `home-assistant/brands` 仓库，而该仓库**已不再接收新第三方
+   集成的图标**（其 PR 模板原文：*Pull requests for adding new custom
+   components will no longer be accepted*），所以永远不会有 `hoymiles` 的条目。
+3. 于是 CDN 返回 HA 的通用灰底占位图（约 3039 字节）。
+
+结论：**本地 `brand/` 目录只对 HA 自己有效，对 HACS 列表无效。**
+
+处理：什么都不用做，等 HACS 修复。相关的 open issue：
+
+- [hacs/integration#5171](https://github.com/hacs/integration/issues/5171) — HACS dashboard doesn't show local brand icons (HA 2026.3+)
+- [hacs/integration#5223](https://github.com/hacs/integration/issues/5223)
+- [hacs/integration#5402](https://github.com/hacs/integration/issues/5402)
+
+想推动的话**去对应 issue 点 👍 / 补一句复现信息**即可。
+
+> ⚠️ **不要**去 `home-assistant/brands` 提 PR 加 `custom_integrations/hoymiles/`：
+> 官方已明确不再接收，且该项目 `AI_POLICY.md` 禁止用自主 agent 提 PR/issue。
+
+### 5.7 换了品牌图但界面还是旧的
+
+HA 2026.3 起品牌图走本地代理并**落盘缓存**，改了文件不清缓存就一直吐旧图。
+
+按顺序处理：
+
+1. **清 HA 侧缓存**：删除 `/homeassistant/.cache/brands/integrations/hoymiles/`
+   （容器内 HA 配置目录是 `/homeassistant`，不是 `/config`）。
+2. **浏览器硬刷新**：`Ctrl` + `Shift` + `R`。
+3. 浏览器缓存 7 天、Cloudflare 24h（只影响 CDN 那一路）。
+
+核对 HA 实际吐的是哪个版本（最可靠）：
+
+```js
+// 在 HA 页面控制台里执行；token 可从任意品牌图 <img> 的 src 里抄
+const r = await fetch("/api/brands/integration/hoymiles/icon.png?token=<token>");
+console.log((await r.arrayBuffer()).byteLength);   // 与本地文件大小对比
+```
+
+### 5.8 HACS 里的名字/版本不对，或重启后条目消失
+
+**名字与版本以「最新 Release」为准。** HACS 读的是 Release 里的 `hacs.json`
+与 `manifest.json`，**不是 main 分支**。
+
+所以改了 `hacs.json` 的 `name` 后发现 HACS 还显示旧名，**必须发一个新 Release**。
+反过来也要注意：如果 `manifest.json` 的 version 比最新 Release 高，
+用户在 HACS 点「下载」会**降级**到那个 Release。
+
+**重启后自定义仓库从列表消失**：HACS 只把**已安装**仓库的完整数据写进
+`.storage/hacs.data`（含 `category` 字段）。启动时
+`utils/data.py` 的 `register_unknown_repositories` 会跳过没有 `category` 的条目，
+所以「只添加、没下载」的仓库重启后不会被重新注册。
+
+处理：在 HACS 里**点一次「下载」**，让它正式记录为已安装，此后重启就不会丢。
+
+> 该函数的关键判断：
+> `if entry == "0" or repo_data.get("category", category) is None or ...: continue`
+
+
 ---
 
 ## 6. 发版清单（Copy & Paste）
