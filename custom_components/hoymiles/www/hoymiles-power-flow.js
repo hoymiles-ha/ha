@@ -48,6 +48,8 @@
  *   temperature_entity: sensor.x  # optional, shown next to the title
  *   gradient: true                # optional light backdrop (default true)
  *   max_width: 620                # optional px, the drawing stays centered
+ *   flow_speed: 1                 # optional multiplier for the moving pearls;
+ *                                 # 0.5 = half speed (calmer), 2 = faster
  *   entities:                     # optional entity id overrides, keyed by the
  *                                 # suffix the card looks up
  *     system_pv_power: sensor.my_pv_power
@@ -90,11 +92,17 @@ function _hmPowerFlowRegister() {
 
   /* Speed of the moving pearls. The travel time is derived from the connector
      length, so a short stub and a long line no longer look like different
-     animals. */
-  const DOT_SPEED_MIN = 40; // px per second at ~0 W
-  const DOT_SPEED_MAX = 230; // px per second at full power
-  const DOT_DUR_MIN = 0.8; // s, keeps the very short stubs readable
-  const DOT_DUR_MAX = 6.0; // s
+     animals.
+
+     These are deliberately calm: at 1059 W the 325 px PV connector takes about
+     3.8 s to cross, which reads as a gentle drift instead of a race. The old
+     values (40..230 px/s) made it cross in 1.4 s, which looked frantic. Use the
+     card's `flow_speed` option to nudge the whole thing (1 = default). */
+  const DOT_SPEED_MIN = 18; // px per second at ~0 W
+  const DOT_SPEED_MAX = 85; // px per second at full power
+  const DOT_SPEED_PER_W = 0.1; // px/s gained per watt, saturates near 670 W
+  const DOT_DUR_MIN = 1.4; // s, keeps the very short stubs readable
+  const DOT_DUR_MAX = 9.0; // s
 
   /* How many consecutive zero `sys_grid_p` readings mean "no meter fitted".
      Sampled once per second to mirror the 1 s `quick/state` push, so the
@@ -347,13 +355,19 @@ function _hmPowerFlowRegister() {
    *  * each pearl fades in and out at the ends instead of popping into place;
    *  * longer connectors carry two pearls, half a period apart, which reads as
    *    one continuous flow instead of a lone dot every few seconds.
+   *
+   * `speedScale` comes from the card's `flow_speed` option (1 = the defaults
+   * above); it multiplies the speed, so 0.5 doubles every travel time.
    */
-  function flowPearls(route) {
+  function flowPearls(route, speedScale = 1) {
     const power = Math.abs(num(route.power));
     if (power < MIN_FLOW) return "";
 
+    const scale = speedScale > 0 ? speedScale : 1;
     const len = pathLength(route.d);
-    const speed = clamp(DOT_SPEED_MIN + power * 0.25, DOT_SPEED_MIN, DOT_SPEED_MAX);
+    const speed = clamp(
+      DOT_SPEED_MIN + power * DOT_SPEED_PER_W, DOT_SPEED_MIN, DOT_SPEED_MAX,
+    ) * scale;
     const dur = clamp(len / speed, DOT_DUR_MIN, DOT_DUR_MAX);
     const path = route.reverse ? reversePath(route.d) : route.d;
     const count = len > 110 ? 2 : 1;
@@ -573,11 +587,17 @@ function _hmPowerFlowRegister() {
         this._config.language, this._config.gradient, this._config.max_width,
         this._config.title, this._config.show_title, this._config.show_rssi,
         this._config.show_extras, this._config.has_meter,
-        this._config.meter_zero_samples,
+        this._config.meter_zero_samples, this._config.flow_speed,
         this._temperature(),
         d.pv, d.battery, d.grid, d.gridOn, d.load, d.soc, d.status, d.rssi,
         d.pv2, d.smartPlug,
       ].join("\u0001");
+    }
+
+    /** Multiplier for the pearl speed (`flow_speed`, 1 = default). */
+    _flowSpeed() {
+      const scale = num(this._config && this._config.flow_speed);
+      return scale > 0 ? scale : 1;
     }
 
     /* ----------------------------- lookup ----------------------------- */
@@ -860,7 +880,7 @@ function _hmPowerFlowRegister() {
         <path class="pf-line" d="${r.d}" fill="none"
               vector-effect="non-scaling-stroke"/>`).join("");
 
-      const dots = routes.map(flowPearls).join("");
+      const dots = routes.map((r) => flowPearls(r, this._flowSpeed())).join("");
 
       const pill = (x, y, text, cls) => {
         if (!text) return "";
@@ -1166,6 +1186,9 @@ function _hmPowerFlowRegister() {
           <ha-textfield label="meter_zero_samples (default 10)"
             .value=${config.meter_zero_samples === undefined ? "" : String(config.meter_zero_samples)}
             @change=${this._changed("meter_zero_samples")}></ha-textfield>
+          <ha-textfield label="flow_speed (default 1, 0.5 = 更慢)"
+            .value=${config.flow_speed === undefined ? "" : String(config.flow_speed)}
+            @change=${this._changed("flow_speed")}></ha-textfield>
           <label class="sw">
             <ha-switch .checked=${config.show_title !== false}
               @change=${this._toggle("show_title")}></ha-switch>
