@@ -61,28 +61,82 @@ function _hmTouRegister() {
 
     static get styles() {
       return css`
+        /* iOS-style layout, matching the control card: grouped blocks, inset
+           hairlines instead of a full table grid, segmented controls and pill
+           buttons. */
         :host { display: block; }
+        ha-card { padding: 14px 16px 16px; }
         .wrap { color: var(--primary-text-color); }
-        .bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding-bottom: 8px; }
-        .chip { font-size: 12px; color: var(--secondary-text-color); }
-        .gate { padding: 12px; border: 1px dashed var(--divider-color); border-radius: 6px;
-                color: var(--secondary-text-color); font-size: 13px; }
-        .tblwrap { overflow-x: auto; }
+        .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+                margin-bottom: 12px; }
+        .head .title { font-size: 17px; font-weight: 600; }
+        .head .sub { font-size: 12.5px; color: var(--secondary-text-color); }
+
+        .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+               margin-bottom: 14px; }
+        .chip { font-size: 12.5px; color: var(--secondary-text-color); }
+        .gate { padding: 14px; border-radius: 14px; font-size: 13.5px;
+                line-height: 1.5;
+                background: var(--secondary-background-color, rgba(120,120,128,.12));
+                color: var(--secondary-text-color); }
+
+        /* rounded group, like an iOS settings section */
+        .group { background: var(--secondary-background-color, rgba(120,120,128,.08));
+                 border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
+        .group-title { font-size: 12.5px; font-weight: 500;
+                       color: var(--secondary-text-color); padding: 0 6px 6px;
+                       margin-top: 4px; }
+
+        .tblwrap { overflow-x: auto; border-radius: 14px; }
         table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid var(--divider-color); padding: 2px 6px; font-size: 13px; }
-        th { background: var(--secondary-background-color); white-space: nowrap; }
-        .wplan { min-width: 460px; }
-        .dplan { min-width: 760px; }
+        th, td { border: none; padding: 8px 6px; font-size: 13.5px;
+                 text-align: left; vertical-align: middle; }
+        thead th { font-size: 12px; font-weight: 500; padding-top: 10px;
+                   padding-bottom: 6px;
+                   color: var(--secondary-text-color); white-space: nowrap; }
+        tbody tr + tr td { border-top: 1px solid var(--divider-color); }
+        tbody td:first-child, thead th:first-child { padding-left: 14px; }
+        tbody td:last-child, thead th:last-child { padding-right: 14px; }
+        .wplan { min-width: 420px; }
+        .dplan { min-width: 780px; }
         select, input { width: 100%; box-sizing: border-box; min-width: 0;
-                        background: var(--input-background-color); color: var(--primary-text-color); }
+                        font: inherit; font-size: 13.5px; padding: 6px 9px;
+                        border-radius: 9px; border: 1px solid transparent;
+                        background: var(--card-background-color, #fff);
+                        color: var(--primary-text-color); outline: none; }
+        select:focus, input:focus { border-color: var(--primary-color); }
         .col-mode { width: 118px; } .col-time { width: 112px; }
         .col-num { width: 84px; } .col-btn { width: 46px; }
-        .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
-        .tab { padding: 3px 10px; border: 1px solid var(--divider-color); border-radius: 4px;
-               cursor: pointer; font-size: 13px; }
-        .tab.on { background: var(--primary-color); color: var(--text-primary-color, #fff); }
-        h4 { margin: 10px 0 4px; font-size: 13px; color: var(--secondary-text-color); }
-        .log { max-height: 140px; overflow-y: auto; font-size: 12px; white-space: pre-wrap; }
+
+        /* segmented control (day 1..8) */
+        .seg { display: inline-flex; padding: 2px; gap: 2px; max-width: 100%;
+               overflow-x: auto;
+               background: var(--secondary-background-color, rgba(120,120,128,.16));
+               border-radius: 10px; }
+        .seg .tab { border: none; background: none; font: inherit;
+                    font-size: 13px; padding: 5px 12px; border-radius: 8px;
+                    cursor: pointer; color: var(--primary-text-color);
+                    white-space: nowrap;
+                    transition: background .15s, box-shadow .15s; }
+        .seg .tab.on { background: var(--card-background-color, #fff);
+                       box-shadow: 0 1px 3px rgba(0,0,0,.14);
+                       font-weight: 600; }
+
+        /* pill buttons */
+        .btn { font: inherit; font-size: 13.5px; font-weight: 500;
+               padding: 8px 15px; border-radius: 10px; border: none;
+               cursor: pointer;
+               background: var(--secondary-background-color, rgba(120,120,128,.16));
+               color: var(--primary-text-color); }
+        .btn.primary { background: var(--primary-color); font-weight: 600;
+                       color: var(--text-primary-color, #fff); }
+        .btn.danger { background: none; color: var(--error-color);
+                      padding: 8px 10px; }
+        .btn:active { filter: brightness(.94); }
+
+        .log { max-height: 140px; overflow-y: auto; font-size: 12px;
+               white-space: pre-wrap; padding: 10px 14px; border-radius: 14px;
+               background: var(--secondary-background-color, rgba(120,120,128,.08)); }
         .err { color: var(--error-color); } .ok { color: var(--success-color); }
       `;
     }
@@ -322,15 +376,18 @@ function _hmTouRegister() {
       if (this._config.require_tou_mode !== false && mode && mode !== "tou_plan") {
         return html`
           <ha-card>
-            <div class="wrap" style="padding:16px">
+            <div class="wrap">
+              <div class="head">
+                <div class="title">${this._config.title || this._t("TOU plan", "分时计划")}</div>
+              </div>
               <div class="gate">
                 ${this._t("Hidden: EMS mode is ", "已隐藏：EMS 模式为 ")}
                 <b>${mode}</b>${this._t(", not 'tou_plan'.", "，不是 tou_plan。")}<br/>
                 ${this._t("Switch to TOU mode to edit the plan.", "切换到 tou_plan 后可编辑分时计划。")}
               </div>
-              <div class="bar" style="margin-top:8px">
-                <button class="tab on" @click=${() => this._setMode("tou_plan")}>
-                  ${this._t("Mode: tou_plan", "模式: tou_plan")}
+              <div class="bar" style="margin-top:14px; margin-bottom:0">
+                <button class="btn primary" @click=${() => this._setMode("tou_plan")}>
+                  ${this._t("Switch to tou_plan", "切换到 tou_plan")}
                 </button>
               </div>
             </div>
@@ -344,62 +401,62 @@ function _hmTouRegister() {
 
       return html`
         <ha-card>
-          <div class="wrap" style="padding:12px">
-            <div class="bar">
-              <b>${this._config.title || this._t("TOU plan", "分时计划")}</b>
-              <span class="chip">${this._dev()} · EMS: ${mode || "?"}</span>
+          <div class="wrap">
+            <div class="head">
+              <div class="title">${this._config.title || this._t("TOU plan", "分时计划")}</div>
+              <div class="sub">${this._dev()} · EMS: ${mode || "?"}</div>
             </div>
 
             <div class="bar">
-              <button class="tab on" @click=${() => this._setMode("tou_plan")}>
-                ${this._t("Mode: tou_plan", "模式: tou_plan")}
-              </button>
-              <button class="tab" @click=${() => this._getPlan(WEEK[(new Date().getDay() + 6) % 7])}>
+              <button class="btn" @click=${() => this._getPlan(WEEK[(new Date().getDay() + 6) % 7])}>
                 ${this._t("Load today", "载入今天")}
               </button>
-              <button class="tab" @click=${() => this._getPlan("Mon")}>${this._t("Load Mon", "载入周一")}</button>
-              <button class="tab on" @click=${() => this._saveAll()}>
+              <button class="btn" @click=${() => this._getPlan("Mon")}>${this._t("Load Mon", "载入周一")}</button>
+              <button class="btn primary" @click=${() => this._saveAll()}>
                 ${this._t("Save & Activate", "保存并激活")}
               </button>
             </div>
 
-            <h4>${this._t("Week plan", "周计划")}</h4>
-            <div class="tblwrap">
-              <table class="wplan">
-                <thead><tr><th>${this._t("Day", "星期")}</th><th>${this._t("Day plan", "日计划")}</th></tr></thead>
-                <tbody>
-                  ${WEEK.map((name, index) => html`
-                    <tr>
-                      <td>${this._weekLabel(name)}</td>
-                      <td>
-                        <select @change=${(e) => {
-                          const week = this._draft.week.slice();
-                          week[index] = Number(e.target.value);
-                          this._draft = { ...this._draft, week };
-                        }}>
-                          <option value="0" ?selected=${!this._draft.week[index]}>—</option>
-                          ${[1, 2, 3, 4, 5, 6, 7, 8].map((idx) => html`
-                            <option value=${idx} ?selected=${this._draft.week[index] === idx}>day${idx}</option>
-                          `)}
-                        </select>
-                      </td>
-                    </tr>
-                  `)}
-                </tbody>
-              </table>
+            <div class="group-title">${this._t("Week plan", "周计划")}</div>
+            <div class="group">
+              <div class="tblwrap">
+                <table class="wplan">
+                  <thead><tr><th>${this._t("Day", "星期")}</th><th>${this._t("Day plan", "日计划")}</th></tr></thead>
+                  <tbody>
+                    ${WEEK.map((name, index) => html`
+                      <tr>
+                        <td>${this._weekLabel(name)}</td>
+                        <td>
+                          <select @change=${(e) => {
+                            const week = this._draft.week.slice();
+                            week[index] = Number(e.target.value);
+                            this._draft = { ...this._draft, week };
+                          }}>
+                            <option value="0" ?selected=${!this._draft.week[index]}>—</option>
+                            ${[1, 2, 3, 4, 5, 6, 7, 8].map((idx) => html`
+                              <option value=${idx} ?selected=${this._draft.week[index] === idx}>day${idx}</option>
+                            `)}
+                          </select>
+                        </td>
+                      </tr>
+                    `)}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
-            <h4>${this._t("Day plan editor", "日计划编辑")}</h4>
-            <div class="tabs">
+            <div class="group-title">${this._t("Day plan editor", "日计划编辑")}</div>
+            <div class="seg" style="margin-bottom:10px">
               ${[1, 2, 3, 4, 5, 6, 7, 8].map((idx) => html`
-                <div class="tab ${idx === day ? "on" : ""}" @click=${() => {
+                <button class="tab ${idx === day ? "on" : ""}" @click=${() => {
                   this._draft = { ...this._draft, curDay: idx };
-                }}>day${idx}</div>
+                }}>day${idx}</button>
               `)}
             </div>
 
-            <div class="tblwrap">
-              <table class="dplan">
+            <div class="group">
+              <div class="tblwrap">
+                <table class="dplan">
                 <colgroup>
                   <col class="col-mode"/><col class="col-time"/><col class="col-time"/>
                   <col class="col-num"/><col class="col-num"/><col class="col-num"/>
@@ -436,26 +493,29 @@ function _hmTouRegister() {
                         @change=${(e) => this._setSegment(day, index, "pc", Number(e.target.value))}/></td>
                       <td><input type="number" min="100" .value=${seg.pd}
                         @change=${(e) => this._setSegment(day, index, "pd", Number(e.target.value))}/></td>
-                      <td><button class="tab" @click=${() => this._removeSegment(day, index)}>✕</button></td>
+                      <td><button class="btn danger" @click=${() => this._removeSegment(day, index)}>✕</button></td>
                     </tr>
                   `)}
                 </tbody>
-              </table>
+                </table>
+              </div>
             </div>
-            <div class="bar" style="margin-top:6px">
-              <button class="tab" @click=${() => this._addSegment(day)}>
+            <div class="bar" style="margin-top:8px">
+              <button class="btn" @click=${() => this._addSegment(day)}>
                 ${this._t("+ Add segment", "+ 添加时段")}
               </button>
             </div>
 
-            <h4>${this._t("Status", "状态")}</h4>
-            <div class="chip">
-              ${this._t("status", "回显")}: ${statusState ? statusState.state : "-"} ·
-              ${this._t("day ack", "日应答")}: ${(this._hass.states[this._dayAckEntity()] || {}).state || "-"} ·
-              ${this._t("week ack", "周应答")}: ${(this._hass.states[this._weekAckEntity()] || {}).state || "-"}
-            </div>
-            <div class="log">
-              ${(this._log || []).map((entry) => html`<div class=${entry.cls}>${entry.line}</div>`)}
+            <div class="group-title">${this._t("Status", "状态")}</div>
+            <div class="group">
+              <div class="log">
+                <div class="chip">
+                  ${this._t("status", "回显")}: ${statusState ? statusState.state : "-"} ·
+                  ${this._t("day ack", "日应答")}: ${(this._hass.states[this._dayAckEntity()] || {}).state || "-"} ·
+                  ${this._t("week ack", "周应答")}: ${(this._hass.states[this._weekAckEntity()] || {}).state || "-"}
+                </div>
+                ${(this._log || []).map((entry) => html`<div class=${entry.cls}>${entry.line}</div>`)}
+              </div>
             </div>
           </div>
         </ha-card>

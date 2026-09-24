@@ -28,6 +28,14 @@
  *   title: 控制
  *   show_phase: true            # optional, default true
  *   show_power_ctrl: true       # optional, default true
+ *   show_topics: true           # optional, default false; show the MQTT topic
+ *                               # of every row (engineering detail)
+ *   subtitle: false             # optional; hide the grey line under the title
+ *
+ * The layout follows the iOS settings idiom: small grey section headers, one
+ * rounded group per section, rows of icon + name + right-aligned control, and
+ * hairline separators that stop short of the card edge. The MQTT topic paths
+ * are hidden by default - they are useful while debugging but noisy in use.
  * ========================================================================== */
 
 function _hmControlRegister() {
@@ -63,6 +71,10 @@ function _hmControlRegister() {
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
     }[ch]));
   }
+
+  /* `esc()` is only for markup strings handed to `_untrusted()` (they go through
+   * `innerHTML`). Lit templates escape their own bindings, so a `${...}` inside a
+   * `html` template must keep the value raw. */
 
   class HoymilesControl extends LitElement {
     static get properties() {
@@ -105,50 +117,98 @@ function _hmControlRegister() {
 
     static get styles() {
       return css`
+        /* iOS-style settings layout: grouped cards, right-aligned controls,
+           hairline separators that stop short of the card edge. */
         :host { display: block; }
         ha-card { padding: 14px 16px 16px; }
-        .title { font-size: 16px; font-weight: 600;
-                 color: var(--primary-text-color); margin-bottom: 4px; }
-        .row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center;
-               padding: 11px 0; border-top: 1px solid var(--divider-color); }
-        .row:first-of-type { border-top: none; }
-        .label { flex: 0 0 158px; font-size: 13.5px;
-                 color: var(--primary-text-color); font-weight: 500; }
-        .label small { display: block; font-weight: 400; font-size: 11.5px;
-                       color: var(--secondary-text-color); margin-top: 3px;
-                       word-break: break-all; }
-        .body { flex: 1 1 260px; display: flex; flex-wrap: wrap; gap: 8px;
-                align-items: center; }
-        .btn {
-          font: inherit; font-size: 13px; padding: 7px 15px; border-radius: 9px;
-          border: 1px solid var(--divider-color); cursor: pointer;
-          background: none; color: var(--primary-text-color); transition: all .15s;
+        .head { display: flex; align-items: baseline; gap: 10px;
+                margin-bottom: 12px; }
+        .head .title { font-size: 17px; font-weight: 600;
+                       color: var(--primary-text-color); }
+        .head .sub { font-size: 12.5px; color: var(--secondary-text-color); }
+
+        .group { background: var(--secondary-background-color, rgba(120,120,128,.08));
+                 border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
+        .group-title { font-size: 12.5px; font-weight: 500;
+                       color: var(--secondary-text-color);
+                       padding: 0 6px 6px; }
+        .group-wrapper:not(:first-of-type) { margin-top: 16px; }
+
+        .item { display: flex; align-items: center; gap: 12px;
+                padding: 11px 14px; min-height: 52px;
+                box-sizing: border-box; position: relative; }
+        .item + .item::before {
+          content: ""; position: absolute; top: 0; left: 14px; right: 0;
+          height: 1px; background: var(--divider-color); opacity: .7;
         }
-        .btn:hover { background: var(--secondary-background-color, rgba(127,127,127,.1)); }
-        .btn.on { background: var(--primary-color); border-color: var(--primary-color);
-                  color: var(--text-primary-color, #fff); }
-        .btn.warn { color: var(--error-color); border-color: var(--error-color); }
-        .btn.warn.on { background: var(--error-color); color: #fff; }
+        .item .ico { flex: 0 0 auto; width: 24px; text-align: center;
+                     font-size: 16px; line-height: 1; }
+        .item .nm { flex: 1 1 auto; min-width: 0; font-size: 15px;
+                    color: var(--primary-text-color); line-height: 1.3; }
+        .item .nm small { display: block; font-size: 12px; font-weight: 400;
+                          color: var(--secondary-text-color); margin-top: 2px;
+                          line-height: 1.35; }
+        .item .nm code { font-size: 11px; color: var(--secondary-text-color);
+                         word-break: break-all; }
+        .item .ctrl { flex: 0 0 auto; display: flex; align-items: center;
+                      gap: 8px; margin-left: auto; }
+        .item.stack { flex-direction: column; align-items: stretch; gap: 8px; }
+        .item.stack .ctrl { margin-left: 0; flex-wrap: wrap; }
+        .item .ctrl .unit { font-size: 13px; color: var(--secondary-text-color); }
+
+        /* segmented control (the iOS signature control) */
+        .seg { display: inline-flex; padding: 2px; gap: 2px;
+               background: var(--secondary-background-color, rgba(120,120,128,.16));
+               border-radius: 10px; }
+        .seg button {
+          border: none; background: none; font: inherit; font-size: 13px;
+          padding: 5px 12px; border-radius: 8px; cursor: pointer;
+          color: var(--primary-text-color); white-space: nowrap;
+          transition: background .15s, box-shadow .15s;
+        }
+        .seg button.on {
+          background: var(--card-background-color, #fff);
+          box-shadow: 0 1px 3px rgba(0,0,0,.14); font-weight: 600;
+        }
+        .seg button:disabled { opacity: .4; cursor: not-allowed; }
+        .seg.danger button.on { color: var(--error-color); }
+
+        /* plain pill button */
+        .btn {
+          font: inherit; font-size: 13.5px; font-weight: 500;
+          padding: 8px 15px; border-radius: 10px; border: none;
+          cursor: pointer; background: var(--secondary-background-color, rgba(120,120,128,.16));
+          color: var(--primary-text-color); transition: filter .15s;
+        }
+        .btn:active { filter: brightness(.94); }
+        .btn.primary { background: var(--primary-color);
+                       color: var(--text-primary-color, #fff); font-weight: 600; }
+        .btn.danger { background: none; color: var(--error-color); padding: 8px 10px; }
         .btn:disabled { opacity: .45; cursor: not-allowed; }
-        .btn.small { padding: 7px 12px; }
+
         input {
-          font: inherit; font-size: 13.5px; width: 108px; padding: 6px 9px;
-          border: 1px solid var(--divider-color); border-radius: 9px;
+          font: inherit; font-size: 15px; width: 88px; text-align: right;
+          padding: 7px 10px; border-radius: 10px;
+          border: 1px solid transparent;
           background: var(--card-background-color, #fff);
           color: var(--primary-text-color); outline: none;
+          font-variant-numeric: tabular-nums;
         }
         input:focus { border-color: var(--primary-color); }
-        input.narrow { width: 76px; }
+        input.narrow { width: 62px; }
         select {
-          font: inherit; font-size: 13.5px; padding: 6px 9px; border-radius: 9px;
-          border: 1px solid var(--divider-color);
+          font: inherit; font-size: 15px; padding: 7px 10px;
+          border-radius: 10px; border: 1px solid transparent;
           background: var(--card-background-color, #fff);
-          color: var(--primary-text-color); outline: none;
+          color: var(--primary-text-color); outline: none; cursor: pointer;
         }
-        .hint { font-size: 11.5px; color: var(--secondary-text-color); flex: 1 1 100%; }
-        .state { font-size: 13px; color: var(--secondary-text-color); }
-        .toast { margin-top: 10px; font-size: 12.5px; padding: 8px 11px;
-                 border-radius: 9px; background: var(--secondary-background-color, rgba(127,127,127,.12)); }
+        select:focus { border-color: var(--primary-color); }
+        .state { font-size: 13px; color: var(--secondary-text-color);
+                 white-space: nowrap; }
+        .state.live { color: var(--primary-color); font-weight: 500; }
+        .toast { margin-top: 12px; font-size: 13px; padding: 10px 13px;
+                 border-radius: 12px;
+                 background: var(--secondary-background-color, rgba(120,120,128,.12)); }
         .toast.err { color: var(--error-color); }
       `;
     }
@@ -383,152 +443,207 @@ function _hmControlRegister() {
 
       return html`
         <ha-card>
-          <div class="title">${esc(this._config.title || this._t("Control", "控制"))}</div>
-          ${this._switchRow()}
-          ${this._emsRow()}
-          ${showPowerCtrl ? this._powerCtrlRow() : ""}
-          ${this._outputRow()}
-          ${showPhase ? this._phaseRow() : ""}
-          ${this._touRow()}
-          ${this._rebootRow()}
+          <div class="head">
+            <div class="title">${this._config.title || this._t("Control", "控制")}</div>
+            ${this._config.subtitle === false ? "" : html`
+              <div class="sub">${this._t(
+                "Commands are sent straight to the device",
+                "指令直接下发到设备",
+              )}</div>`}
+          </div>
+          ${this._group(this._t("Power & mode", "电源与模式"), [
+            this._switchItem(),
+            this._emsItem(),
+          ])}
+          ${this._group(this._t("Power settings", "功率设置"), [
+            showPowerCtrl ? this._powerCtrlItem() : "",
+            this._outputItem(),
+            showPhase ? this._phaseItem() : "",
+          ])}
+          ${this._group(this._t("Plan & maintenance", "计划与维护"), [
+            this._touItem(),
+            this._rebootItem(),
+          ])}
           ${this._toast === "" ? "" : html`
-            <div class="toast ${this._toastError ? "err" : ""}">${esc(this._toast)}</div>`}
+            <div class="toast ${this._toastError ? "err" : ""}">${this._toast}</div>`}
         </ha-card>
       `;
     }
 
-    _row(label, topic, body, hint) {
+    /** One grouped block, like an iOS settings section. */
+    _group(title, items) {
       return html`
-        <div class="row">
-          <div class="label">${label}<small>${esc(topic)}</small></div>
-          <div class="body">${body}${hint || ""}</div>
+        <div class="group-wrapper">
+          ${title ? html`<div class="group-title">${title}</div>` : ""}
+          <div class="group">${items}</div>
         </div>`;
     }
 
-    _switchRow() {
-      const on = this._isSwitchOn();
-      return this._row(
-        this._t("Power", "设备开关"),
-        this._topic("switch/<dev_id>/set"),
-        html`
-          <button class="btn ${on ? "on" : ""}"
-            @click=${() => this._setSwitch(true)}>${this._t("On", "开机")}</button>
-          <button class="btn warn ${on ? "" : "on"}"
-            @click=${() => this._setSwitch(false)}>${this._t("Off", "关机")}</button>
-          <span class="state">${on ? this._t("running", "运行中") : this._t("standby", "已休眠")}</span>`,
-      );
+    /**
+     * One settings row: icon, name (with an optional grey sub-line), and the
+     * control right-aligned. `stack` puts the control on its own line, which is
+     * what the three-phase inputs need.
+     */
+    _item({ icon, name, sub, topic, ctrl, stack }) {
+      const showTopics = this._config.show_topics === true;
+      return html`
+        <div class="item ${stack ? "stack" : ""}">
+          ${icon ? html`<span class="ico">${icon}</span>` : ""}
+          <div class="nm">${name}
+            ${sub ? html`<small>${sub}</small>` : ""}
+            ${showTopics && topic ? html`<small><code>${topic}</code></small>` : ""}
+          </div>
+          <div class="ctrl">${ctrl}</div>
+        </div>`;
     }
 
-    _emsRow() {
+    /** iOS segmented control. `options` = [{id, label, enabled, title}] */
+    _segment(options, current, onPick, extraClass = "") {
+      return html`
+        <div class="seg ${extraClass}">
+          ${options.map((opt) => html`
+            <button class="${opt.id === current ? "on" : ""}"
+              ?disabled=${opt.enabled === false}
+              title=${opt.title || ""}
+              @click=${() => onPick(opt.id)}>${opt.label}</button>`)}
+        </div>`;
+    }
+
+    _switchItem() {
+      const on = this._isSwitchOn();
+      return this._item({
+        icon: "⚡",
+        name: this._t("Power", "设备开关"),
+        sub: on ? this._t("running", "运行中") : this._t("standby", "已休眠"),
+        topic: this._topic("switch/<dev_id>/set"),
+        ctrl: this._segment(
+          [
+            { id: "on", label: this._t("On", "开机") },
+            { id: "off", label: this._t("Off", "关机") },
+          ],
+          on ? "on" : "off",
+          (id) => this._setSwitch(id === "on"),
+        ),
+      });
+    }
+
+    _emsItem() {
       const current = this._emsMode();
       const supported = this._emsOptions();
-      const buttons = EMS_MODES.map((mode) => {
-        const ok = supported.includes(mode.id);
-        const title = ok ? "" : this._t(
-          "This device does not offer this mode (an on-grid micro inverter is present).",
-          "该模式当前不可用（并网口存在微逆）。",
-        );
-        return html`
-          <button class="btn ${current === mode.id ? "on" : ""}" ?disabled=${!ok}
-            title=${title}
-            @click=${() => this._setEmsMode(mode.id)}>${esc(this._t(mode.en, mode.zh))}</button>`;
+      const options = EMS_MODES.map((mode) => ({
+        id: mode.id,
+        label: this._t(mode.en, mode.zh),
+        enabled: supported.includes(mode.id),
+        title: supported.includes(mode.id)
+          ? mode.id
+          : this._t(
+            "Not available while an on-grid micro inverter is present.",
+            "并网口存在微逆时不可用。",
+          ),
+      }));
+      return this._item({
+        icon: "🔋",
+        name: this._t("EMS mode", "EMS 模式"),
+        sub: current === "" ? "—" : current,
+        topic: this._topic("select/<dev_id>/ems_mode/command"),
+        ctrl: this._segment(options, current, (id) => this._setEmsMode(id)),
       });
-      return this._row(
-        this._t("EMS mode", "EMS 模式"),
-        this._topic("select/<dev_id>/ems_mode/command"),
-        html`${buttons}
-          <span class="state">${current === "" ? "—" : esc(current)}</span>`,
-        html`<div class="hint">${this._t(
-          "mqtt_ctrl requires the LAN to have no micro inverter; changing the mode takes effect immediately.",
-          "mqtt_ctrl 要求局域网内无微逆；模式切换立即生效。",
-        )}</div>`,
-      );
     }
 
-    _powerCtrlRow() {
-      const mode = this._emsMode();
-      const ready = mode === "mqtt_ctrl";
+    _powerCtrlItem() {
+      const ready = this._emsMode() === "mqtt_ctrl";
       const min = this._attr("power_ctrl", "number", "min");
       const max = this._attr("power_ctrl", "number", "max");
-      const range = min != null && max != null
-        ? `${min} ~ ${max} W`
-        : "-1000 ~ 1000 W";
-      return this._row(
-        this._t("Power control", "功率控制"),
-        this._topic("number/<dev_id>/power_ctrl/set"),
-        html`
+      const range = min != null && max != null ? `${min} ~ ${max} W` : "-1000 ~ 1000 W";
+      return this._item({
+        icon: "🎛",
+        name: this._t("Power control", "功率控制"),
+        sub: this._t(
+          `${range}, re-send at least once a minute`,
+          `${range}，需至少每分钟下发一次`,
+        ),
+        topic: this._topic("number/<dev_id>/power_ctrl/set"),
+        ctrl: html`
           <input type="number" step="0.1" .value=${this._powerCtrl}
             @input=${(e) => { this._powerCtrl = e.target.value; }} />
-          <button class="btn on" @click=${() => this._sendPowerCtrl()}>${this._t("Send", "下发")}</button>
-          ${ready ? "" : html`<span class="state">${this._t("switch EMS to mqtt_ctrl first", "需先切到 mqtt_ctrl")}</span>`}`,
-        html`<div class="hint">${this._t(
-          `Range ${range}. Must be re-sent at least once a minute, otherwise the device falls back to self-consumption.`,
-          `范围 ${range}。需至少每分钟下发一次，否则设备会切回自发自用。`,
-        )}</div>`,
-      );
+          <span class="unit">W</span>
+          <button class="btn primary" ?disabled=${!ready}
+            @click=${() => this._sendPowerCtrl()}>${this._t("Send", "下发")}</button>
+          ${ready ? "" : html`<span class="state">${this._t(
+            "requires mqtt_ctrl", "需先切到 mqtt_ctrl")}</span>`}`,
+      });
     }
 
-    _outputRow() {
+    _outputItem() {
       const min = this._attr("output_power", "number", "min");
       const max = this._attr("output_power", "number", "max");
       const range = min != null && max != null ? `${min} ~ ${max} W` : "100 ~ 2000 W";
-      return this._row(
-        this._t("Output power", "输出功率"),
-        this._topic("number/<dev_id>/output_power/set"),
-        html`
+      return this._item({
+        icon: "📤",
+        name: this._t("Output power", "输出功率"),
+        sub: this._t(`Range ${range}.`, `范围 ${range}。`),
+        topic: this._topic("number/<dev_id>/output_power/set"),
+        ctrl: html`
           <input type="number" step="1" .value=${this._outputPower}
             @input=${(e) => { this._outputPower = e.target.value; }} />
-          <button class="btn on" @click=${() => this._sendOutputPower()}>${this._t("Send", "下发")}</button>`,
-        html`<div class="hint">${this._t(`Range ${range}.`, `范围 ${range}。`)}</div>`,
-      );
+          <span class="unit">W</span>
+          <button class="btn primary"
+            @click=${() => this._sendOutputPower()}>${this._t("Send", "下发")}</button>`,
+      });
     }
 
-    _phaseRow() {
+    _phaseItem() {
       const min = this._attr("phase_a_output_power", "number", "min");
       const max = this._attr("phase_a_output_power", "number", "max");
       const range = min != null && max != null ? `${min} ~ ${max} W` : "100 ~ 2500 W";
       const field = (key, label) => html`
-        <label class="state">${label}</label>
+        <span class="state">${label}</span>
         <input class="narrow" type="number" step="1" .value=${this._phase[key]}
           @input=${(e) => { this._phase = { ...this._phase, [key]: e.target.value }; }} />`;
-      return this._row(
-        this._t("Phase output", "多相输出功率"),
-        this._topic("number/<dev_id>/phase_output_power/set"),
-        html`
+      return this._item({
+        icon: "🔌",
+        name: this._t("Phase output", "多相输出功率"),
+        sub: this._t(`Range ${range}.`, `范围 ${range}。`),
+        topic: this._topic("number/<dev_id>/phase_output_power/set"),
+        stack: true,
+        ctrl: html`
           ${field("a", "A")}${field("b", "B")}${field("c", "C")}
-          <button class="btn on" @click=${() => this._sendPhase()}>${this._t("Send", "下发")}</button>`,
-        html`<div class="hint">${this._t(
-          `Range ${range}, sent as {"phase_a":..,"phase_b":..,"phase_c":..}.`,
-          `范围 ${range}，按 {"phase_a":..,"phase_b":..,"phase_c":..} 下发。`,
-        )}</div>`,
-      );
+          <span class="unit">W</span>
+          <button class="btn primary"
+            @click=${() => this._sendPhase()}>${this._t("Send", "下发")}</button>`,
+      });
     }
 
-    _touRow() {
+    _touItem() {
       const options = WEEKDAYS.map((d) =>
         `<option value="${d}" ${d === this._week ? "selected" : ""}>${d}</option>`).join("");
-      return this._row(
-        this._t("Get TOU plan", "获取 TOU 计划"),
-        this._topic("sensor/<dev_id>/tou_plan/get"),
-        html`
+      return this._item({
+        icon: "📅",
+        name: this._t("Get TOU plan", "获取 TOU 计划"),
+        sub: this._t(
+          "Reply arrives on tou_plan/status; edited below",
+          "应答发布在 tou_plan/status；编辑见下方",
+        ),
+        topic: this._topic("sensor/<dev_id>/tou_plan/get"),
+        ctrl: html`
           <select @change=${(e) => { this._week = e.target.value; }}>
             ${this._untrusted(options)}
           </select>
-          <button class="btn on" @click=${() => this._sendTouGet()}>${this._t("Get", "获取")}</button>`,
-        html`<div class="hint">${this._t(
-          "The reply arrives on tou_plan/status; the full plan editor is below.",
-          "应答发布在 tou_plan/status；完整的日/周计划编辑器见下方。",
-        )}</div>`,
-      );
+          <button class="btn"
+            @click=${() => this._sendTouGet()}>${this._t("Get", "获取")}</button>`,
+      });
     }
 
-    _rebootRow() {
-      return this._row(
-        this._t("Reboot", "重启设备"),
-        this._topic("button/<dev_id>/reboot/trigger"),
-        html`
-          <button class="btn warn" @click=${() => this._reboot()}>${this._t("Reboot", "重启")}</button>`,
-      );
+    _rebootItem() {
+      return this._item({
+        icon: "🔄",
+        name: this._t("Reboot", "重启设备"),
+        sub: this._t("Takes about a minute", "约需一分钟"),
+        topic: this._topic("button/<dev_id>/reboot/trigger"),
+        ctrl: html`
+          <button class="btn danger"
+            @click=${() => this._reboot()}>${this._t("Reboot", "重启")}</button>`,
+      });
     }
 
     _untrusted(markup) {
@@ -558,10 +673,20 @@ function _hmControlRegister() {
       };
     }
 
+    _toggle(field) {
+      return (event) => {
+        const config = { ...(this._config || {}), [field]: event.target.checked };
+        this._config = config;
+        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config } }));
+      };
+    }
+
     static get styles() {
       return css`
         .row { padding: 8px; }
         ha-textfield { display: block; width: 100%; margin-bottom: 8px; }
+        .sw { display: flex; align-items: center; gap: 10px; padding: 6px 0;
+              font-size: 14px; color: var(--primary-text-color); }
       `;
     }
 
@@ -575,6 +700,11 @@ function _hmControlRegister() {
             @change=${this._changed("title")}></ha-textfield>
           <ha-textfield label="language (en|zh)" .value=${config.language || "zh"}
             @change=${this._changed("language")}></ha-textfield>
+          <label class="sw">
+            <ha-switch .checked=${config.show_topics === true}
+              @change=${this._toggle("show_topics")}></ha-switch>
+            <span>show_topics (显示 MQTT 主题，调试用)</span>
+          </label>
         </div>
       `;
     }
