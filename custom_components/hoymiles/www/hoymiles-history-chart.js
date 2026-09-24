@@ -96,6 +96,12 @@ function _hmHistoryRegister() {
     }[ch]));
   }
 
+  /* `esc()` is only for the markup strings handed to `_untrusted()` (they go
+   * through `innerHTML`, so they really do need escaping). Lit templates escape
+   * their own text and attribute bindings, so wrapping a `${...}` inside a
+   * `html` template in `esc()` would render `&amp;` on screen - a series called
+   * "电网&负载" would read as "电网&amp;负载". */
+
   /** Round `value` up to a readable 1 / 2 / 5 / 10 × 10^n step.
    *
    * The 2.5 mantissa is deliberately not used: the axis draws five labels
@@ -639,7 +645,7 @@ function _hmHistoryRegister() {
         <ha-card>
           <div class="head">
             ${this._config.show_toolbar === false ? "" : this._toolbar()}
-            ${title === "" ? "" : html`<div class="title">${esc(title)}</div>`}
+            ${title === "" ? "" : html`<div class="title">${title}</div>`}
           </div>
           ${this._body()}
           ${this._legend()}
@@ -698,7 +704,7 @@ function _hmHistoryRegister() {
             <span class="li ${selected < 0 ? "" : selected === i ? "on" : "off"}"
               title=${this._t("Click to highlight", "点击高亮该曲线")}
               @click=${(e) => { e.stopPropagation(); this._selectSeries(i); }}>
-              <i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name || s.entity)}
+              <i class="dot" style="background:${s.color}"></i>${s.name || s.entity}
             </span>`)}
         </div>`;
     }

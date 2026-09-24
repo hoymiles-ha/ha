@@ -43,6 +43,10 @@ function _hmPackListRegister() {
     }[ch]));
   }
 
+  /* `esc()` is for markup that goes through `innerHTML` only. Lit templates
+   * escape their own bindings, so `esc()` inside a `${...}` in a `html`
+   * template would show the escaped entities verbatim. */
+
   class HoymilesPackList extends LitElement {
     static get properties() {
       return { _config: { type: Object }, _hass: { type: Object } };
@@ -200,7 +204,7 @@ function _hmPackListRegister() {
 
       return html`
         <ha-card>
-          <div class="title">${esc(this._config.title || this._t("Battery packs", "电池包"))}</div>
+          <div class="title">${this._config.title || this._t("Battery packs", "电池包")}</div>
           ${count === 0
             ? html`<div class="none">${this._t("No pack data", "无电池包数据")}</div>`
             : html`<div class="grid" style="grid-template-columns:repeat(${columns},1fr)">${rows}</div>`}
