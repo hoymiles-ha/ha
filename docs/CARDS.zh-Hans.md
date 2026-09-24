@@ -43,6 +43,44 @@ CDN。用 **添加卡片 → 手动** 粘贴 YAML，或直接写进仪表盘 YAM
 > `hoymiles-gauge` 是例外 —— 它内部没有任何文案，上面的字全部来自你配置的
 > `name` / `label` / `icon`，永远不需要翻译。
 
+### 让自己写的文字也跟随语言
+
+上面的规则只管卡片**内部**的文案。你在 YAML 里写的文字（卡片标题、曲线名、
+gauge 的 name、`balancer_label`）是你自己的，卡片无法翻译 —— 但可以在你提供的
+多个语言之间选择：把**字符串换成映射**即可。
+
+```yaml
+type: custom:hoymiles-history-chart
+# 原来： title: History
+title:
+  en: History
+  zh: 历史数据
+series:
+  - entity: sensor.x_pv_power
+    name:
+      en: PV power
+      zh: 发电功率
+```
+
+卡片按解析出的语言（`zh` / `en`）取值。映射里**没有**当前语言时，先回退 `en`，
+再回退到任意一个已有的条目，所以残缺的映射也不会变空。普通字符串行为完全不变，
+因此**现有仪表盘全都不受影响**。
+
+支持语言映射的参数：
+
+| 卡片 | 支持映射的参数 |
+|---|---|
+| 所有卡片 | `title` |
+| `hoymiles-history-chart` | `title`、`series[].name` |
+| `hoymiles-gauge` | `name`、`label` |
+| `hoymiles-energy-sankey` | `title`、`balancer_label` |
+
+> 可视化卡片编辑器只能存普通字符串，所以映射在那里显示为**空字段**，标签会写
+> `accepts an en/zh map`。这些参数请在 YAML 编辑器（⋮ → *在 YAML 中编辑*）里改。
+
+> Home Assistant 自带的卡片（`markdown`）以及视图 / 页签标题属于 HA 本身、不属于本集成，
+> 它们的文字无法跟随语言。请把这些写成语言无关的内容，或者为它们统一选一种语言。
+
 ---
 
 ## 1. `custom:hoymiles-power-flow`

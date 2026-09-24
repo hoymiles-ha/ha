@@ -68,6 +68,41 @@ function _hmHistoryRegister() {
   }
 
   /* ------------------------------------------------------------------ *
+   * Localised config strings
+   *
+   * A config value may be a plain string (used as-is, so every existing
+   * dashboard keeps working) or a language map:
+   *
+   *   title:
+   *     en: History
+   *     zh: 历史数据
+   *   series:
+   *     - entity: sensor.x
+   *       name:
+   *         en: PV power
+   *         zh: 发电功率
+   *
+   * That is what lets the text *you* write follow the UI language too, instead
+   * of pinning a dashboard to one language. A map missing the current language
+   * falls back to `en`, then to whichever entry exists.
+   * ------------------------------------------------------------------ */
+  function hmText(value, lang) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const hit = value[lang];
+      if (hit != null) return hit;
+      if (value.en != null) return value.en;
+      const first = Object.values(value)[0];
+      return first == null ? "" : first;
+    }
+    return value;
+  }
+
+  /** A text field can only hold a plain string, so a language map shows empty. */
+  function hmField(value) {
+    return typeof value === "string" ? value : "";
+  }
+
+  /* ------------------------------------------------------------------ *
    * Layout / behaviour constants
    * ------------------------------------------------------------------ */
   /* `VB_W` is only the drawing width used before the card has been measured.
@@ -402,6 +437,17 @@ function _hmHistoryRegister() {
       return hmLang(this._hass, this._config) === "zh" ? zh : en;
     }
 
+    /** Resolve one user-supplied string (plain string or language map). */
+    _text(value) {
+      return hmText(value, hmLang(this._hass, this._config));
+    }
+
+    /** A series' display name, resolved for the current language. */
+    _sName(s) {
+      if (!s) return "";
+      return this._text(s.name != null ? s.name : s.entity) || "";
+    }
+
     /* --------------------------- time windows --------------------------- */
 
     _window() {
@@ -713,7 +759,7 @@ function _hmHistoryRegister() {
     render() {
       if (!this._config) return html``;
       const title = this._config.title === false ? ""
-        : (this._config.title || this._t("History", "历史数据"));
+        : (this._text(this._config.title) || this._t("History", "历史数据"));
 
       // The toolbar sits first so it lands in the card's top left corner.
       return html`
@@ -779,7 +825,7 @@ function _hmHistoryRegister() {
             <span class="li ${selected < 0 ? "" : selected === i ? "on" : "off"}"
               title=${this._t("Click to highlight", "点击高亮该曲线")}
               @click=${(e) => { e.stopPropagation(); this._selectSeries(i); }}>
-              <i class="dot" style="background:${s.color}"></i>${s.name || s.entity}
+              <i class="dot" style="background:${s.color}"></i>${this._sName(s)}
             </span>`)}
         </div>`;
     }
@@ -961,7 +1007,7 @@ function _hmHistoryRegister() {
       const dec = Math.min((axDecimals || 0) + 1, 2);
       const rows = data.values.map((vals, k) => ({
         color: this._config.series[k].color,
-        name: this._config.series[k].name || this._config.series[k].entity,
+        name: this._sName(this._config.series[k]),
         value: vals[i],
         faded: this._selected >= 0 && this._selected !== k,
       }));
@@ -1123,7 +1169,7 @@ function _hmHistoryRegister() {
       const config = this._config || {};
       return html`
         <div class="row">
-          <ha-textfield label="title" .value=${config.title || ""}
+          <ha-textfield label="title (accepts an en/zh map)" .value=${hmField(config.title)}
             @change=${this._changed("title")}></ha-textfield>
           <ha-textfield label="language (auto|en|zh, auto follows Home Assistant)"
             .value=${config.language || ""} @change=${this._changed("language")}></ha-textfield>

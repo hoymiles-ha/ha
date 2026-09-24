@@ -37,6 +37,36 @@ function _hmTouRegister() {
     return ui && String(ui).toLowerCase().startsWith("zh") ? "zh" : "en";
   }
 
+  /* ------------------------------------------------------------------ *
+   * Localised config strings
+   *
+   * A config value may be a plain string (used as-is, so every existing
+   * dashboard keeps working) or a language map:
+   *
+   *   title:
+   *     en: TOU plan
+   *     zh: 分时计划
+   *
+   * That is what lets the text *you* write follow the UI language too, instead
+   * of pinning a dashboard to one language. A map missing the current language
+   * falls back to `en`, then to whichever entry exists.
+   * ------------------------------------------------------------------ */
+  function hmText(value, lang) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const hit = value[lang];
+      if (hit != null) return hit;
+      if (value.en != null) return value.en;
+      const first = Object.values(value)[0];
+      return first == null ? "" : first;
+    }
+    return value;
+  }
+
+  /** A text field can only hold a plain string, so a language map shows empty. */
+  function hmField(value) {
+    return typeof value === "string" ? value : "";
+  }
+
   const WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const WEEK_ZH = { Mon: "周一", Tue: "周二", Wed: "周三", Thu: "周四", Fri: "周五", Sat: "周六", Sun: "周日" };
   const MODE_LABEL = {
@@ -189,6 +219,11 @@ function _hmTouRegister() {
     }
 
     _t(en, zh) { return hmLang(this._hass, this._config) === "zh" ? zh : en; }
+
+    /** Resolve one user-supplied string (plain string or language map). */
+    _text(value) {
+      return hmText(value, hmLang(this._hass, this._config));
+    }
     _dev() { return this._config.dev_id; }
     _weekLabel(day) { return this._t(day, WEEK_ZH[day]); }
 
@@ -425,7 +460,7 @@ function _hmTouRegister() {
           <div class="wrap ${locked ? "locked" : ""}"
                aria-disabled=${locked ? "true" : "false"}>
             <div class="head">
-              <div class="title">${this._config.title || this._t("TOU plan", "分时计划")}</div>
+              <div class="title">${this._text(this._config.title) || this._t("TOU plan", "分时计划")}</div>
               <div class="sub">${this._dev()} · EMS: ${mode || "?"}</div>
             </div>
 
@@ -572,7 +607,7 @@ function _hmTouRegister() {
         <div style="padding:8px">
           <ha-textfield label="dev_id" .value=${config.dev_id || ""}
             @change=${this._valueChanged("dev_id")} style="display:block"></ha-textfield>
-          <ha-textfield label="title" .value=${config.title || ""}
+          <ha-textfield label="title (accepts an en/zh map)" .value=${hmField(config.title)}
             @change=${this._valueChanged("title")} style="display:block"></ha-textfield>
           <ha-textfield label="language (auto|en|zh, auto follows Home Assistant)"
             .value=${config.language || ""} @change=${this._valueChanged("language")} style="display:block"></ha-textfield>

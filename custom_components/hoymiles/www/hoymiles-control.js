@@ -59,6 +59,36 @@ function _hmControlRegister() {
     return ui && String(ui).toLowerCase().startsWith("zh") ? "zh" : "en";
   }
 
+  /* ------------------------------------------------------------------ *
+   * Localised config strings
+   *
+   * A config value may be a plain string (used as-is, so every existing
+   * dashboard keeps working) or a language map:
+   *
+   *   title:
+   *     en: Device control
+   *     zh: 设备控制
+   *
+   * That is what lets the text *you* write follow the UI language too, instead
+   * of pinning a dashboard to one language. A map missing the current language
+   * falls back to `en`, then to whichever entry exists.
+   * ------------------------------------------------------------------ */
+  function hmText(value, lang) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const hit = value[lang];
+      if (hit != null) return hit;
+      if (value.en != null) return value.en;
+      const first = Object.values(value)[0];
+      return first == null ? "" : first;
+    }
+    return value;
+  }
+
+  /** A text field can only hold a plain string, so a language map shows empty. */
+  function hmField(value) {
+    return typeof value === "string" ? value : "";
+  }
+
   const EMS_MODES = [
     { id: "general", en: "General", zh: "自发自用" },
     { id: "mqtt_ctrl", en: "MQTT ctrl", zh: "MQTT 功率控制" },
@@ -335,6 +365,11 @@ function _hmControlRegister() {
 
     _t(en, zh) {
       return hmLang(this._hass, this._config) === "zh" ? zh : en;
+    }
+
+    /** Resolve one user-supplied string (plain string or language map). */
+    _text(value) {
+      return hmText(value, hmLang(this._hass, this._config));
     }
 
     _dev() {
@@ -694,7 +729,7 @@ function _hmControlRegister() {
       return html`
         <ha-card>
           <div class="head">
-            <div class="title">${this._config.title || this._t("Control", "控制")}</div>
+            <div class="title">${this._text(this._config.title) || this._t("Control", "控制")}</div>
             ${this._config.subtitle === false ? "" : html`
               <div class="sub">${this._t(
                 "Commands are sent straight to the device",
@@ -1036,7 +1071,7 @@ function _hmControlRegister() {
         <div class="row">
           <ha-textfield label="dev_id (required)" .value=${config.dev_id || ""}
             @change=${this._changed("dev_id")}></ha-textfield>
-          <ha-textfield label="title" .value=${config.title || ""}
+          <ha-textfield label="title (accepts an en/zh map)" .value=${hmField(config.title)}
             @change=${this._changed("title")}></ha-textfield>
           <ha-textfield label="language (auto|en|zh, auto follows Home Assistant)"
             .value=${config.language || ""} @change=${this._changed("language")}></ha-textfield>

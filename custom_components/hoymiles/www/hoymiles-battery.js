@@ -60,6 +60,36 @@ function _hmBatteryRegister() {
   }
 
   /* ------------------------------------------------------------------ *
+   * Localised config strings
+   *
+   * A config value may be a plain string (used as-is, so every existing
+   * dashboard keeps working) or a language map:
+   *
+   *   title:
+   *     en: HiBattery X
+   *     zh: 电池组
+   *
+   * That is what lets the text *you* write follow the UI language too, instead
+   * of pinning a dashboard to one language. A map missing the current language
+   * falls back to `en`, then to whichever entry exists.
+   * ------------------------------------------------------------------ */
+  function hmText(value, lang) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const hit = value[lang];
+      if (hit != null) return hit;
+      if (value.en != null) return value.en;
+      const first = Object.values(value)[0];
+      return first == null ? "" : first;
+    }
+    return value;
+  }
+
+  /** A text field can only hold a plain string, so a language map shows empty. */
+  function hmField(value) {
+    return typeof value === "string" ? value : "";
+  }
+
+  /* ------------------------------------------------------------------ *
    * Drawing constants
    * ------------------------------------------------------------------ */
   const VB_W = 620;
@@ -364,7 +394,7 @@ function _hmBatteryRegister() {
       }
       return [
         hmLang(this._hass, this._config),
-        this._config.max_width, this._config.title,
+        this._config.max_width, this._title(),
         this._config.show_title, this._config.alarm_entity, this._range,
         // The model arrives with the device registry, which can load after the
         // first render, so it has to be part of what triggers a rebuild.
@@ -390,6 +420,11 @@ function _hmBatteryRegister() {
 
     _t(en, zh) {
       return hmLang(this._hass, this._config) === "zh" ? zh : en;
+    }
+
+    /** Resolve one user-supplied string (plain string or language map). */
+    _text(value) {
+      return hmText(value, hmLang(this._hass, this._config));
     }
 
     _dev() {
@@ -441,7 +476,7 @@ function _hmBatteryRegister() {
      * the hardware changes.
      */
     _title() {
-      const configured = this._config && this._config.title;
+      const configured = this._text(this._config && this._config.title);
       if (typeof configured === "string" && configured) return configured;
       return this._model() || "HiBattery X";
     }
@@ -899,7 +934,7 @@ function _hmBatteryRegister() {
         <div class="row">
           <ha-textfield label="dev_id (required)" .value=${config.dev_id || ""}
             @change=${this._changed("dev_id")}></ha-textfield>
-          <ha-textfield label="title (defaults to the device model)" .value=${config.title || ""}
+          <ha-textfield label="title (defaults to the device model; accepts an en/zh map)" .value=${hmField(config.title)}
             @change=${this._changed("title")}></ha-textfield>
           <ha-textfield label="show_title (false = hide the heading)"
             .value=${config.show_title === false ? "false" : ""}

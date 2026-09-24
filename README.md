@@ -39,8 +39,10 @@ that mirror the layout of the Hoymiles app.
   **no CDN and no third-party card** — they work offline.
 - **Follows the UI language.** All eight cards use the language of the Home Assistant
   user viewing them (`hass.language`), so one dashboard reads correctly for an
-  English and a Chinese user at the same time. Pin a card with `language: en` or
-  `language: zh` only when you need to.
+  English and a Chinese user at the same time. Text **you** write can follow too -
+  give `title` / `name` / `label` a map (`{en: History, zh: 历史数据}`) instead of a
+  string. See [docs/CARDS.md](docs/CARDS.md#making-your-own-text-follow-the-language-too).
+  Pin a card with `language: en` / `language: zh` only when you need to.
 - **Honest availability.** If the device stops pushing, entities turn `unavailable`
   within 2 minutes instead of showing stale numbers forever.
 

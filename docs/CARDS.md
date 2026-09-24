@@ -47,6 +47,48 @@ override them individually with the card's `entities:` map.
 > `hoymiles-gauge` is the exception — it has no built-in wording at all. Every word
 > on it comes from your own `name` / `label` / `icon`, so it never needs translating.
 
+### Making your own text follow the language too
+
+The language rule above covers the wording *inside* the cards. The text **you** write
+in YAML - card titles, series names, gauge names, `balancer_label` - is yours, so the
+card cannot translate it. It can, however, pick between the languages you supply:
+write a **map** instead of a string.
+
+```yaml
+type: custom:hoymiles-history-chart
+# instead of:  title: History
+title:
+  en: History
+  zh: 历史数据
+series:
+  - entity: sensor.x_pv_power
+    name:
+      en: PV power
+      zh: 发电功率
+```
+
+The card looks up the resolved language (`zh` or `en`). A map that is missing the
+current language falls back to `en`, then to whichever entry exists, so a partial map
+is never blank. A plain string keeps working exactly as before, which is why every
+existing dashboard is unaffected.
+
+Supported on these options:
+
+| Card | Options that accept a map |
+|---|---|
+| all cards | `title` |
+| `hoymiles-history-chart` | `title`, `series[].name` |
+| `hoymiles-gauge` | `name`, `label` |
+| `hoymiles-energy-sankey` | `title`, `balancer_label` |
+
+> Because the visual card editor holds plain strings, a map shows there as an empty
+> field and the label says `accepts an en/zh map`. Edit those options in the YAML
+> editor (⋮ → *Edit in YAML*) rather than the visual one.
+
+> Home Assistant's own cards - `markdown`, and the view/tab titles - belong to HA, not
+> to this integration, so their text cannot follow the language. Keep those
+> language-neutral, or pick one language for them.
+
 ---
 
 ## 1. `custom:hoymiles-power-flow`

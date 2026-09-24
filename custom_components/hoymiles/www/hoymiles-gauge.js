@@ -49,6 +49,44 @@ function _hmGaugeRegister() {
   const css = LitElement.prototype.css;
 
   /* ------------------------------------------------------------------ *
+   * Language
+   *
+   * This card has no built-in wording - every word on it comes from the user's
+   * own `name` / `label` / `icon` - so it has no `_t()`. It still has to
+   * resolve *those* against the language, because otherwise the tiles are the
+   * one part of a dashboard that cannot follow the UI language:
+   *
+   *   name:
+   *     en: PV today
+   *     zh: 今日发电量
+   *
+   * An explicit `language:` still wins; otherwise the Home Assistant user's
+   * language decides. Any `zh*` code counts as Chinese.
+   * ------------------------------------------------------------------ */
+  function hmLang(hass, config) {
+    const wanted = config && config.language;
+    if (wanted) return String(wanted).toLowerCase().startsWith("zh") ? "zh" : "en";
+    const ui = hass && hass.language;
+    return ui && String(ui).toLowerCase().startsWith("zh") ? "zh" : "en";
+  }
+
+  function hmText(value, lang) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const hit = value[lang];
+      if (hit != null) return hit;
+      if (value.en != null) return value.en;
+      const first = Object.values(value)[0];
+      return first == null ? "" : first;
+    }
+    return value;
+  }
+
+  /** A text field can only hold a plain string, so a language map shows empty. */
+  function hmField(value) {
+    return typeof value === "string" ? value : "";
+  }
+
+  /* ------------------------------------------------------------------ *
    * Arc geometry: one half circle over a centre that sits on the bottom edge,
    * so the card shows a simple arch.
    * ------------------------------------------------------------------ */
@@ -175,6 +213,11 @@ function _hmGaugeRegister() {
 
     /* ---------------------------- the numbers ---------------------------- */
 
+    /** Resolve one user-supplied string (plain string or language map). */
+    _text(value) {
+      return hmText(value, hmLang(this._hass, this._config));
+    }
+
     _read() {
       const entityId = this._config.entity;
       const state = this._hass && this._hass.states ? this._hass.states[entityId] : null;
@@ -247,7 +290,7 @@ function _hmGaugeRegister() {
     render() {
       if (!this._config) return html``;
       const value = this._read();
-      const name = this._config.name || this._config.entity;
+      const name = this._text(this._config.name) || this._config.entity;
       const icon = this._config.icon == null ? "" : String(this._config.icon);
       const min = this._config.min == null ? 0 : num(this._config.min);
       const max = Math.max(this._max(), 1e-9);
@@ -305,7 +348,7 @@ function _hmGaugeRegister() {
           + ` stroke-linecap="round"/>`;
       const caption = this._config.label == null ? ""
         : `<text class="cap" x="${CX}" y="${LABEL_Y}"`
-          + ` text-anchor="middle">${esc(this._config.label)}</text>`;
+          + ` text-anchor="middle">${esc(this._text(this._config.label))}</text>`;
 
       return `<svg viewBox="0 0 ${VB_W} ${VB_H}" preserveAspectRatio="xMidYMid meet"`
         + ` xmlns="http://www.w3.org/2000/svg" role="img">`
@@ -355,7 +398,7 @@ function _hmGaugeRegister() {
         <div class="row">
           <ha-textfield label="entity (required)" .value=${config.entity || ""}
             @change=${this._changed("entity")}></ha-textfield>
-          <ha-textfield label="name" .value=${config.name || ""}
+          <ha-textfield label="name (accepts an en/zh map)" .value=${hmField(config.name)}
             @change=${this._changed("name")}></ha-textfield>
           <ha-textfield label="unit" .value=${config.unit || ""}
             @change=${this._changed("unit")}></ha-textfield>
@@ -365,7 +408,7 @@ function _hmGaugeRegister() {
             @change=${this._changed("max")}></ha-textfield>
           <ha-textfield label="icon (emoji)" .value=${config.icon || ""}
             @change=${this._changed("icon")}></ha-textfield>
-          <ha-textfield label="label (caption under the percentage)" .value=${config.label || ""}
+          <ha-textfield label="label (caption under the percentage; accepts an en/zh map)" .value=${hmField(config.label)}
             @change=${this._changed("label")}></ha-textfield>
           <ha-textfield label="color (default #22c55e)" .value=${config.color || ""}
             @change=${this._changed("color")}></ha-textfield>

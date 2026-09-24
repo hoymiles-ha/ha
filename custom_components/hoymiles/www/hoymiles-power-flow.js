@@ -99,6 +99,36 @@ function _hmPowerFlowRegister() {
   }
 
   /* ------------------------------------------------------------------ *
+   * Localised config strings
+   *
+   * A config value may be a plain string (used as-is, so every existing
+   * dashboard keeps working) or a language map:
+   *
+   *   title:
+   *     en: History
+   *     zh: 历史数据
+   *
+   * That is what lets the text *you* write follow the UI language too, instead
+   * of pinning a dashboard to one language. A map missing the current language
+   * falls back to `en`, then to whichever entry exists.
+   * ------------------------------------------------------------------ */
+  function hmText(value, lang) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const hit = value[lang];
+      if (hit != null) return hit;
+      if (value.en != null) return value.en;
+      const first = Object.values(value)[0];
+      return first == null ? "" : first;
+    }
+    return value;
+  }
+
+  /** A text field can only hold a plain string, so a language map shows empty. */
+  function hmField(value) {
+    return typeof value === "string" ? value : "";
+  }
+
+  /* ------------------------------------------------------------------ *
    * Drawing constants. The SVG uses a fixed viewBox and is scaled by CSS,
    * so the illustration stays valid at any card width.
    * ------------------------------------------------------------------ */
@@ -602,7 +632,7 @@ function _hmPowerFlowRegister() {
       return [
         hmLang(this._hass, this._config),
         this._config.gradient, this._config.max_width,
-        this._config.title, this._config.show_title, this._config.show_rssi,
+        this._text(this._config.title), this._config.show_title, this._config.show_rssi,
         this._config.show_extras, this._config.has_meter,
         this._config.meter_zero_samples, this._config.flow_speed,
         this._temperature(),
@@ -621,6 +651,11 @@ function _hmPowerFlowRegister() {
 
     _t(en, zh) {
       return hmLang(this._hass, this._config) === "zh" ? zh : en;
+    }
+
+    /** Resolve one user-supplied string (plain string or language map). */
+    _text(value) {
+      return hmText(value, hmLang(this._hass, this._config));
     }
 
     _dev() {
@@ -772,7 +807,7 @@ function _hmPowerFlowRegister() {
           <div class="head ${showName ? "" : "bare"}">
             ${showName ? html`
               <div class="hname">
-                ${esc(this._config.title || this._t("My home", "我的家"))}
+                ${esc(this._text(this._config.title) || this._t("My home", "我的家"))}
                 <span class="dev">${esc(this._dev())}</span>
               </div>` : ""}
             <div class="hright">
@@ -794,7 +829,7 @@ function _hmPowerFlowRegister() {
      * ``title: false`` works too, so a single switch is enough in YAML.
      */
     _showName() {
-      return this._config.show_title !== false && this._config.title !== false;
+      return this._config.show_title !== false && this._text(this._config.title) !== false;
     }
 
     _wrapStyle() {
@@ -1189,7 +1224,7 @@ function _hmPowerFlowRegister() {
         <div class="row">
           <ha-textfield label="dev_id (required)" .value=${config.dev_id || ""}
             @change=${this._changed("dev_id")}></ha-textfield>
-          <ha-textfield label="title" .value=${config.title || ""}
+          <ha-textfield label="title (accepts an en/zh map)" .value=${hmField(config.title)}
             @change=${this._changed("title")}></ha-textfield>
           <ha-textfield label="language (auto|en|zh, auto follows Home Assistant)"
             .value=${config.language || ""} @change=${this._changed("language")}></ha-textfield>

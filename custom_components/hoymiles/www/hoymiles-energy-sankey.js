@@ -76,6 +76,39 @@ function _hmSankeyRegister() {
   }
 
   /* ------------------------------------------------------------------ *
+   * Localised config strings
+   *
+   * A config value may be a plain string (used as-is, so every existing
+   * dashboard keeps working) or a language map:
+   *
+   *   title:
+   *     en: Energy flow
+   *     zh: 能量流
+   *   balancer_label:
+   *     en: Loss / other
+   *     zh: 损耗/其他
+   *
+   * That is what lets the text *you* write follow the UI language too, instead
+   * of pinning a dashboard to one language. A map missing the current language
+   * falls back to `en`, then to whichever entry exists.
+   * ------------------------------------------------------------------ */
+  function hmText(value, lang) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const hit = value[lang];
+      if (hit != null) return hit;
+      if (value.en != null) return value.en;
+      const first = Object.values(value)[0];
+      return first == null ? "" : first;
+    }
+    return value;
+  }
+
+  /** A text field can only hold a plain string, so a language map shows empty. */
+  function hmField(value) {
+    return typeof value === "string" ? value : "";
+  }
+
+  /* ------------------------------------------------------------------ *
    * Layout constants — the SVG uses a fixed viewBox and is scaled by CSS,
    * so the diagram stays valid on any card width.
    * ------------------------------------------------------------------ */
@@ -441,9 +474,19 @@ function _hmSankeyRegister() {
       this._hass = hass;
       if (first && hass) {
         this._fetch();
-      } else {
-        this.requestUpdate();
+        return;
       }
+      /* Node and ribbon labels are baked into `_graph` when it is built, so a
+       * language change has to rebuild it - otherwise the title and toolbar
+       * switch language while the diagram keeps the old one. */
+      const lang = hmLang(hass, this._config);
+      if (this._langUsed && lang !== this._langUsed) {
+        this._langUsed = lang;
+        this._graph = null;
+        this._fetch();
+        return;
+      }
+      this.requestUpdate();
     }
 
     getCardSize() { return 6; }
@@ -451,6 +494,11 @@ function _hmSankeyRegister() {
     /* --------------------------- text / config --------------------------- */
 
     _t(en, zh) { return hmLang(this._hass, this._config) === "zh" ? zh : en; }
+
+    /** Resolve one user-supplied string (plain string or language map). */
+    _text(value) {
+      return hmText(value, hmLang(this._hass, this._config));
+    }
     _dev() { return this._config.dev_id; }
 
     _label(def) { return this._t(def.en, def.zh); }
@@ -574,6 +622,10 @@ function _hmSankeyRegister() {
       } finally {
         if (token === this._fetchToken) {
           this._loading = false;
+          /* Record it for *every* outcome, including the error paths: their
+           * message is language dependent too, and leaving it unset would make
+           * the language check in `set hass` skip the rebuild. */
+          this._langUsed = hmLang(this._hass, this._config);
           this.requestUpdate();
         }
       }
@@ -606,14 +658,14 @@ function _hmSankeyRegister() {
         balancer = {
           ...SYNTH.loss,
           value: balance,
-          label: cfg.balancer_label || this._label(SYNTH.loss),
+          label: this._text(cfg.balancer_label) || this._label(SYNTH.loss),
         };
         snks.push(balancer);
       } else if (balance < -THRESHOLD) {
         balancer = {
           ...SYNTH.unmeasured,
           value: -balance,
-          label: cfg.balancer_label || this._label(SYNTH.unmeasured),
+          label: this._text(cfg.balancer_label) || this._label(SYNTH.unmeasured),
         };
         srcs.push(balancer);
       }
@@ -946,7 +998,7 @@ function _hmSankeyRegister() {
 
     render() {
       if (!this._config) return html``;
-      const title = this._config.title || this._t("Energy flow", "能量流");
+      const title = this._text(this._config.title) || this._t("Energy flow", "能量流");
 
       let body;
       if (this._loading && !this._graph) {
@@ -1058,13 +1110,13 @@ function _hmSankeyRegister() {
         <div class="row">
           <ha-textfield label="dev_id" .value=${config.dev_id || ""}
             @change=${this._valueChanged("dev_id")}></ha-textfield>
-          <ha-textfield label="title" .value=${config.title || ""}
+          <ha-textfield label="title (accepts an en/zh map)" .value=${hmField(config.title)}
             @change=${this._valueChanged("title")}></ha-textfield>
           <ha-textfield label="language (auto|en|zh, auto follows Home Assistant)"
             .value=${config.language || ""} @change=${this._valueChanged("language")}></ha-textfield>
           <ha-textfield label="range (${ranges.join("|")})" .value=${config.range || DEFAULT_RANGE}
             @change=${this._valueChanged("range")}></ha-textfield>
-          <ha-textfield label="balancer_label" .value=${config.balancer_label || ""}
+          <ha-textfield label="balancer_label (accepts an en/zh map)" .value=${hmField(config.balancer_label)}
             @change=${this._valueChanged("balancer_label")}></ha-textfield>
         </div>
       `;
