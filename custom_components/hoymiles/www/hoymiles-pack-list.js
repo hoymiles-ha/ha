@@ -13,6 +13,7 @@
  *   language: zh
  *   title: 电池包
  *   columns: 2                 # optional, lay the rows out in N columns
+ *   show_temperature: false    # optional; hide the ℃ reading (SOC only)
  * ========================================================================== */
 
 function _hmPackListRegister() {
@@ -72,9 +73,9 @@ function _hmPackListRegister() {
         .item { display: grid; grid-template-columns: 52px 1fr auto;
                 align-items: center; gap: 10px; }
         .nm { font-size: 13px; color: var(--secondary-text-color); }
-        .bar { height: 9px; border-radius: 5px; overflow: hidden;
+        .bar { height: 13px; border-radius: 7px; overflow: hidden;
                background: var(--divider-color); }
-        .fill { height: 100%; border-radius: 5px; transition: width .3s; }
+        .fill { height: 100%; border-radius: 7px; transition: width .3s; }
         .vals { display: flex; align-items: baseline; gap: 9px;
                 font-variant-numeric: tabular-nums; }
         .soc { font-size: 14.5px; font-weight: 600;
@@ -175,6 +176,7 @@ function _hmPackListRegister() {
       if (!this._config) return html``;
       const count = this._packCount();
       const columns = Math.max(1, num(this._config.columns) || 1);
+      const showTemp = this._config.show_temperature !== false;
 
       const rows = [];
       for (let i = 1; i <= count; i += 1) {
@@ -190,7 +192,7 @@ function _hmPackListRegister() {
             </div>
             <div class="vals">
               <span class="soc">${soc == null ? "—" : `${soc.toFixed(2)}%`}</span>
-              <span class="temp">${temp == null ? "—" : `${temp.toFixed(1)}°C`}</span>
+              ${showTemp ? html`<span class="temp">${temp == null ? "—" : `${temp.toFixed(1)}°C`}</span>` : ""}
               <span class="heat">${heat && heat.state === "on" ? "🔥" : ""}</span>
             </div>
           </div>`);
@@ -241,10 +243,20 @@ function _hmPackListRegister() {
       };
     }
 
+    _toggle(field) {
+      return (event) => {
+        const config = { ...(this._config || {}), [field]: event.target.checked };
+        this._config = config;
+        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config } }));
+      };
+    }
+
     static get styles() {
       return css`
         .row { padding: 8px; }
         ha-textfield { display: block; width: 100%; margin-bottom: 8px; }
+        .sw { display: flex; align-items: center; gap: 10px; padding: 6px 0;
+              font-size: 14px; color: var(--primary-text-color); }
       `;
     }
 
@@ -260,6 +272,11 @@ function _hmPackListRegister() {
             @change=${this._changed("columns")}></ha-textfield>
           <ha-textfield label="language (en|zh)" .value=${config.language || "zh"}
             @change=${this._changed("language")}></ha-textfield>
+          <label class="sw">
+            <ha-switch .checked=${config.show_temperature !== false}
+              @change=${this._toggle("show_temperature")}></ha-switch>
+            <span>show_temperature (显示 ℃)</span>
+          </label>
         </div>
       `;
     }

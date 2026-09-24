@@ -222,31 +222,34 @@ function _hmHistoryRegister() {
         .title { font-size: 16px; font-weight: 600;
                  color: var(--primary-text-color); }
         .head.no-title .title { display: none; }
-        .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        /* Toolbar, shaped like the vendor app's history pages: the date
+           navigator on the left, the range picker on the right. */
+        .toolbar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center;
+                   width: 100%; justify-content: space-between; }
         .toolbar select {
           font: inherit; font-size: 13px; color: var(--primary-text-color);
           background: var(--card-background-color, #fff);
-          border: 1px solid var(--divider-color); border-radius: 9px;
-          padding: 5px 8px; outline: none;
+          border: 1px solid var(--divider-color); border-radius: 10px;
+          padding: 7px 10px; outline: none; cursor: pointer;
         }
-        /* date navigator: one bordered pill holding ‹ date › */
+        /* date navigator: one rounded pill holding ‹ date › */
         .toolbar .nav {
-          display: flex; align-items: center; gap: 0;
-          border: 1px solid var(--divider-color); border-radius: 9px;
-          padding: 0 2px; background: var(--card-background-color, #fff);
+          display: flex; align-items: center; gap: 2px;
+          border: 1px solid var(--divider-color); border-radius: 999px;
+          padding: 2px; background: var(--card-background-color, #fff);
         }
         .toolbar .nav input {
-          font: inherit; font-size: 13px; color: var(--primary-text-color);
-          background: none; border: none; outline: none; padding: 5px 4px;
+          font: inherit; font-size: 13px; font-weight: 600;
+          color: var(--primary-text-color);
+          background: none; border: none; outline: none;
+          padding: 5px 6px; text-align: center;
         }
         select:focus, input:focus { border-color: var(--primary-color); }
         .navbtn {
-          border: 1px solid var(--divider-color); border-radius: 8px;
-          background: none; cursor: pointer; padding: 5px 10px; font: inherit;
-          font-size: 13px; color: var(--primary-text-color); line-height: 1;
-        }
-        .toolbar .nav .navbtn {
-          border: none; border-radius: 7px; padding: 5px 7px; font-size: 15px;
+          width: 30px; height: 30px; border-radius: 50%; border: none;
+          background: none; cursor: pointer; font: inherit;
+          font-size: 15px; color: var(--primary-text-color); line-height: 1;
+          display: inline-flex; align-items: center; justify-content: center;
         }
         .navbtn:hover { background: var(--secondary-background-color, rgba(127,127,127,0.1)); }
         .chart { margin-top: 8px; }
@@ -259,18 +262,22 @@ function _hmHistoryRegister() {
         .tipbox { fill: var(--card-background-color, #fff); stroke: var(--divider-color);
                   stroke-width: 1; }
         .tiptext { font-size: 12px; fill: var(--primary-text-color); }
-        .legend { display: flex; flex-wrap: wrap; gap: 6px 20px;
-                  justify-content: center; margin-top: 6px; }
+        /* pill-shaped legend, like the app: colored disc inside a grey chip */
+        .legend { display: flex; flex-wrap: wrap; gap: 8px 10px;
+                  justify-content: center; margin-top: 10px; }
         .li { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;
               color: var(--primary-text-color); cursor: pointer;
-              border-radius: 8px; padding: 2px 8px;
-              transition: opacity .15s, background .15s;
+              border-radius: 999px; padding: 4px 13px 4px 5px;
+              background: var(--secondary-background-color, rgba(127,127,127,0.12));
+              transition: opacity .15s, background .15s, box-shadow .15s;
               user-select: none; }
-        .li:hover { background: var(--secondary-background-color, rgba(127,127,127,0.12)); }
+        .li:hover { box-shadow: inset 0 0 0 1px var(--divider-color); }
         .li.off { opacity: 0.38; }
-        .li.on { background: var(--secondary-background-color, rgba(127,127,127,0.16));
-                 font-weight: 600; }
-        .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+        .li.on { font-weight: 600;
+                 box-shadow: inset 0 0 0 1px var(--primary-color); }
+        .dot { width: 17px; height: 17px; border-radius: 50%; flex: 0 0 auto;
+               box-sizing: border-box;
+               border: 2px solid var(--card-background-color, #fff); }
         .msg { font-size: 13px; color: var(--secondary-text-color); padding: 26px 2px;
                text-align: center; }
         .err { color: var(--error-color); }
@@ -648,7 +655,6 @@ function _hmHistoryRegister() {
 
       return html`
         <div class="toolbar">
-          <select @change=${(e) => this._onRangeChange(e)}>${this._untrusted(rangeOptions)}</select>
           <div class="nav">
             <button class="navbtn" title=${this._t("Previous", "上一个")}
               @click=${() => this._shiftRange(-1)}>‹</button>
@@ -657,6 +663,7 @@ function _hmHistoryRegister() {
             <button class="navbtn" title=${this._t("Next", "下一个")}
               @click=${() => this._shiftRange(1)}>›</button>
           </div>
+          <select @change=${(e) => this._onRangeChange(e)}>${this._untrusted(rangeOptions)}</select>
         </div>`;
     }
 
