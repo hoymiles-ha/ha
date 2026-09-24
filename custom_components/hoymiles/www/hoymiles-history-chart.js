@@ -54,7 +54,17 @@ function _hmHistoryRegister() {
   /* ------------------------------------------------------------------ *
    * Layout / behaviour constants
    * ------------------------------------------------------------------ */
+  /* `VB_W` is only the drawing width used before the card has been measured.
+   * The charts fill their card via `preserveAspectRatio="none"`, which would
+   * squash every label horizontally (a 625 px card over a 1200 unit viewBox
+   * compresses text to 52 % of its width). To keep text undistorted the viewBox
+   * width follows the measured pixel width (`_vbW`), leaving the scale at 1:1.
+   */
   const VB_W = 1200;
+  const MIN_VB_W = 320;
+  /* `ha-card` padding is `12px 16px 14px`, so the drawing area is this much
+     narrower than the host. Only used before the svg exists. */
+  const CARD_PAD_X = 32;
   const DEFAULT_H = 330;
 
   const PAD_L = 64;   // room for the y labels
@@ -182,6 +192,7 @@ function _hmHistoryRegister() {
         _hover: { type: Number },
         _selected: { type: Number },
         _remoteTime: { type: Number },
+        _vbW: { type: Number },
       };
     }
 
@@ -198,17 +209,60 @@ function _hmHistoryRegister() {
       this._selected = -1;
       this._remoteTime = null;
       this._token = 0;
+      /* viewBox width in CSS pixels; guarded so `_svg` works before mount. */
+      this._vbW = VB_W;
+      this._ro = null;
       this._syncJoined = null;
     }
 
     connectedCallback() {
       super.connectedCallback();
       this._joinSync();
+      this._watchWidth();
     }
 
     disconnectedCallback() {
       super.disconnectedCallback();
       this._leaveSync();
+      if (this._ro) { this._ro.disconnect(); this._ro = null; }
+    }
+
+    /**
+     * Keep the drawing width equal to the svg's pixel width.
+     *
+     * The svg is stretched by CSS (`width:100%` with a fixed pixel height), so
+     * with `preserveAspectRatio="none"` a viewBox wider than the card squashes
+     * the text horizontally. Measuring instead of hard-coding keeps the x scale
+     * at 1 and the labels crisp at any card width.
+     */
+    _watchWidth() {
+      if (typeof ResizeObserver !== "function" || this._ro) return;
+      this._ro = new ResizeObserver(() => this._measure());
+      this._ro.observe(this);
+    }
+
+    /**
+     * Re-read the drawing width. Called after every render (the svg only exists
+     * once there is data, and `_vbW` has to follow the first real layout) and by
+     * the ResizeObserver (for later card resizes).
+     */
+    _measure() {
+      const renderRoot = this.renderRoot;
+      const svg = renderRoot ? renderRoot.querySelector("svg") : null;
+      const svgWidth = svg ? svg.getBoundingClientRect().width : 0;
+      const width = Math.round(svgWidth
+        || this.getBoundingClientRect().width - CARD_PAD_X);
+      if (width < MIN_VB_W) return;
+      // 2 px of slack keeps rounding from ping-ponging the render.
+      if (Math.abs(width - this._vbW) < 2) return;
+      this._vbW = width;
+      this.requestUpdate();
+    }
+
+    /** Current drawing width, falling back to the default before layout. */
+    _width() {
+      const width = this._vbW;
+      return width >= MIN_VB_W ? width : VB_W;
     }
 
     static getConfigElement() {
@@ -317,6 +371,11 @@ function _hmHistoryRegister() {
       this._hass = hass;
       if (first && this._config) this._fetch();
       this.requestUpdate();
+    }
+
+    /** Re-measure after every render: the svg appears only once data arrived. */
+    updated() {
+      this._measure();
     }
 
     getCardSize() {
@@ -711,10 +770,11 @@ function _hmHistoryRegister() {
 
     _svg(data) {
       const H = num(this._config.height) || DEFAULT_H;
+      const W = this._width();
       const { times, layers, max, min } = data;
       const symmetric = this._config.symmetric !== false;
       const x0 = PAD_L;
-      const x1 = VB_W - PAD_R;
+      const x1 = W - PAD_R;
       const yTop = PAD_T;
       const yBot = H - PAD_B;
 
@@ -814,7 +874,7 @@ function _hmHistoryRegister() {
 
       const xLabels = this._xLabels(times, toX, H);
 
-      return `<svg viewBox="0 0 ${VB_W} ${H}" preserveAspectRatio="none"
+      return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
                    style="height:${H}px"
                    xmlns="http://www.w3.org/2000/svg" role="img">
         ${grid}
@@ -826,6 +886,7 @@ function _hmHistoryRegister() {
 
     _xLabels(times, toX, H) {
       const y = H - PAD_B + 18;
+      const W = this._width();
       const picks = [];
       const seen = new Set();
 
@@ -858,13 +919,14 @@ function _hmHistoryRegister() {
 
       return picks.map((p) => {
         const x = toX(p.i);
-        const anchor = x < PAD_L + 8 ? "start" : x > VB_W - PAD_R - 8 ? "end" : "middle";
+        const anchor = x < PAD_L + 8 ? "start" : x > W - PAD_R - 8 ? "end" : "middle";
         return `<text class="axis" x="${x.toFixed(1)}" y="${y}"
           text-anchor="${anchor}">${esc(p.text)}</text>`;
       }).join("");
     }
 
     _hoverLayer(data, toX, yTop, yBot, div, axDecimals) {
+      const W = this._width();
       // A hover can come from this card (bucket index) or from another card in
       // the group (timestamp, which may sit on a different bucket grid), so the
       // index is resolved to a fractional position instead of being assumed.
@@ -891,7 +953,7 @@ function _hmHistoryRegister() {
       const lineH = 17;
       const boxW = 210;
       const boxH = 22 + rows.length * lineH;
-      const boxX = x + 12 + boxW > VB_W - PAD_R ? x - 12 - boxW : x + 12;
+      const boxX = x + 12 + boxW > W - PAD_R ? x - 12 - boxW : x + 12;
       const boxY = Math.min(yTop + 4, yBot - boxH);
 
       let box = `<rect class="tipbox" x="${boxX.toFixed(1)}" y="${boxY.toFixed(1)}"
@@ -990,8 +1052,8 @@ function _hmHistoryRegister() {
       const rect = svg.getBoundingClientRect();
       if (!rect.width) return;
       // The svg is stretched by CSS, so map through the viewBox coordinates.
-      const vbX = ((event.clientX - rect.left) / rect.width) * VB_W;
-      const ratio = (vbX - PAD_L) / (VB_W - PAD_R - PAD_L);
+      const vbX = ((event.clientX - rect.left) / rect.width) * this._width();
+      const ratio = (vbX - PAD_L) / (this._width() - PAD_R - PAD_L);
       const index = Math.round(Math.min(Math.max(ratio, 0), 1) * (data.times.length - 1));
       this._setHover(index);
     }
