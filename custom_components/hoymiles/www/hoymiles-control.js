@@ -63,6 +63,12 @@ function _hmControlRegister() {
 
   const PING_MS = 8000; // how long the "sent" confirmation stays visible
 
+  /* Power on/off is slow: the firmware has to bring the PCS (and the packs)
+     down or up again, so the card shows the requested state as pending until
+     the device reports it (or gives up after this long). */
+  const SWITCH_PENDING_MS = 30000;
+  const SWITCH_CONFIRM_MS = 2500; // how long the tick after confirmation stays
+
   function slug(id) {
     return String(id).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   }
@@ -116,6 +122,11 @@ function _hmControlRegister() {
       this._cache = new Map();
       this._initialised = false;
       this._toastTimer = null;
+      /* Power switch: the requested target while it is in flight, and the time
+         the device confirmed it (drives the tick + spinner). */
+      this._switchPending = null;
+      this._switchConfirmedAt = 0;
+      this._pendingTimer = null;
     }
 
     static getConfigElement() {
@@ -183,6 +194,26 @@ function _hmControlRegister() {
         }
         .seg button:disabled { opacity: .4; cursor: not-allowed; }
         .seg.danger button.on { color: var(--error-color); }
+
+        /* In-flight power on/off: the pressed option spins a ring until the
+           device reports the new state. The spinner lives in the button's own
+           ::after, so no extra markup is needed over the segment. */
+        .seg button.pending { padding-right: 24px; position: relative; }
+        .seg button.pending::after {
+          content: ""; position: absolute; top: 50%; right: 7px;
+          width: 9px; height: 9px; margin-top: -5.5px; border-radius: 50%;
+          border: 2px solid currentColor; border-top-color: transparent;
+          opacity: .75; animation: hm-spin .7s linear infinite;
+        }
+        @keyframes hm-spin { to { transform: rotate(360deg); } }
+
+        /* The sub-line carries the progress, so a slow power cycle still has
+           visible feedback right where the user is looking. */
+        .item .nm small.busy { color: var(--primary-color);
+                               animation: hm-pulse 1.3s ease-in-out infinite; }
+        .item .nm small.done { color: var(--success-color, #0da035);
+                               font-weight: 500; }
+        @keyframes hm-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
 
         /* plain pill button */
         .btn {
@@ -270,6 +301,7 @@ function _hmControlRegister() {
     set hass(hass) {
       this._hass = hass;
       if (!this._initialised) this._seedInputs();
+      this._reconcileSwitch();
       this.requestUpdate();
     }
 
@@ -280,6 +312,7 @@ function _hmControlRegister() {
     disconnectedCallback() {
       super.disconnectedCallback();
       if (this._toastTimer) clearTimeout(this._toastTimer);
+      if (this._pendingTimer) clearTimeout(this._pendingTimer);
     }
 
     /* ----------------------------- lookups ----------------------------- */
@@ -462,20 +495,87 @@ function _hmControlRegister() {
       }, PING_MS);
     }
 
+    /** Clock seam, so the harness can drive the pending timeouts. */
+    _now() {
+      return Date.now();
+    }
+
     _setSwitch(on) {
-      this._optimistic.switch = on ? "on" : "off";
+      const target = on ? "on" : "off";
+      if (this._switchTarget() === target) return; // already on the way there
+      this._switchPending = { target, at: this._now() };
+      this._switchConfirmedAt = 0;
+      // Wake up once the wait is over, so the UI falls back to the real state
+      // even when the device never answers (no hass push would do it for us).
+      if (this._pendingTimer) clearTimeout(this._pendingTimer);
+      this._pendingTimer = setTimeout(() => {
+        this._pendingTimer = null;
+        this.requestUpdate();
+      }, SWITCH_PENDING_MS + 100);
+      this.requestUpdate();
       this._publish(this._topic("switch/<dev_id>/set"), on ? "ON" : "OFF",
         this._t(on ? "Power on" : "Power off", on ? "开机" : "关机"));
     }
 
-    _isSwitchOn() {
+    /** The requested target while the command is still in flight. */
+    _switchTarget() {
+      const pending = this._switchPending;
+      if (!pending) return null;
+      if (this._now() - pending.at >= SWITCH_PENDING_MS) return null;
+      return pending.target;
+    }
+
+    /** The device's own state, or null when it does not report one. */
+    _switchReal() {
       const state = this._state("mqtt_switch", "switch") || this._state("config", "switch");
       const value = state ? String(state.state) : null;
-      if (value === "on" || value === "off") {
-        // An optimistic value wins briefly, so the button reacts immediately.
-        return value === "on";
+      if (value === "on" || value === "off") return value === "on";
+      return null;
+    }
+
+    /**
+     * Drop the pending marker once the device agrees (or the wait expires).
+     *
+     * Called from the `hass` setter, i.e. on every push, which is what makes the
+     * spinner turn into a tick as soon as the firmware confirms the new state.
+     */
+    _reconcileSwitch() {
+      const pending = this._switchPending;
+      if (!pending) return;
+      if (this._now() - pending.at >= SWITCH_PENDING_MS) {
+        this._switchPending = null;
+        return;
       }
-      return this._optimistic.switch === "on";
+      const real = this._switchReal();
+      if (real !== null && real === (pending.target === "on")) {
+        this._switchPending = null;
+        this._switchConfirmedAt = this._now();
+        if (this._pendingTimer) {
+          clearTimeout(this._pendingTimer);
+          this._pendingTimer = null;
+        }
+        // Fade the tick away on its own.
+        this._pendingTimer = setTimeout(() => {
+          this._pendingTimer = null;
+          this.requestUpdate();
+        }, SWITCH_CONFIRM_MS + 100);
+      }
+    }
+
+    /** { on, pending, justConfirmed } for the switch row. */
+    _switchView() {
+      const target = this._switchTarget();
+      if (target) return { on: target === "on", pending: target, confirmed: false };
+      const real = this._switchReal();
+      const on = real === null ? this._optimistic.switch === "on" : real;
+      const justConfirmed = this._switchConfirmedAt > 0
+        && this._now() - this._switchConfirmedAt < SWITCH_CONFIRM_MS;
+      if (!justConfirmed) this._switchConfirmedAt = 0;
+      return { on, pending: null, confirmed: justConfirmed };
+    }
+
+    _isSwitchOn() {
+      return this._switchView().on;
     }
 
     _setEmsMode(mode) {
@@ -587,25 +687,28 @@ function _hmControlRegister() {
      * control right-aligned. `stack` puts the control on its own line, which is
      * what the three-phase inputs need.
      */
-    _item({ icon, name, sub, topic, ctrl, stack }) {
+    _item({ icon, name, sub, subClass, topic, ctrl, stack }) {
       const showTopics = this._config.show_topics === true;
       return html`
         <div class="item ${stack ? "stack" : ""}">
           ${icon ? html`<span class="ico">${icon}</span>` : ""}
           <div class="nm">${name}
-            ${sub ? html`<small>${sub}</small>` : ""}
+            ${sub ? html`<small class=${subClass || ""}>${sub}</small>` : ""}
             ${showTopics && topic ? html`<small><code>${topic}</code></small>` : ""}
           </div>
           <div class="ctrl">${ctrl}</div>
         </div>`;
     }
 
-    /** iOS segmented control. `options` = [{id, label, enabled, title}] */
+    /** iOS segmented control. `options` = [{id, label, enabled, title, pending}] */
     _segment(options, current, onPick, extraClass = "") {
       return html`
         <div class="seg ${extraClass}">
           ${options.map((opt) => html`
-            <button class="${opt.id === current ? "on" : ""}"
+            <button class=${[
+              opt.id === current ? "on" : "",
+              opt.pending ? "pending" : "",
+            ].filter(Boolean).join(" ")}
               ?disabled=${opt.enabled === false}
               title=${opt.title || ""}
               @click=${() => onPick(opt.id)}>${opt.label}</button>`)}
@@ -667,18 +770,37 @@ function _hmControlRegister() {
     }
 
     _switchItem() {
-      const on = this._isSwitchOn();
+      const view = this._switchView();
+      /* The sub-line is where the feedback lands: the button already flips the
+         instant it is pressed, and this explains the wait / confirms it. */
+      const sub = view.pending
+        ? this._t(
+          `Powering ${view.pending === "on" ? "up" : "down"}…`,
+          `${view.pending === "on" ? "正在开机" : "正在关机"}…`,
+        )
+        : view.confirmed
+          ? this._t(
+            view.on ? "Powered on ✓" : "Powered off ✓",
+            view.on ? "已开机 ✓" : "已关机 ✓",
+          )
+          : view.on
+            ? this._t("running", "运行中")
+            : this._t("standby", "已休眠");
+      const subClass = view.pending ? "busy" : view.confirmed ? "done" : "";
       return this._item({
         icon: "⚡",
         name: this._t("Power", "设备开关"),
-        sub: on ? this._t("running", "运行中") : this._t("standby", "已休眠"),
+        sub,
+        subClass,
         topic: this._topic("switch/<dev_id>/set"),
         ctrl: this._segment(
           [
-            { id: "on", label: this._t("On", "开机") },
-            { id: "off", label: this._t("Off", "关机") },
+            { id: "on", label: this._t("On", "开机"),
+              pending: view.pending === "on" },
+            { id: "off", label: this._t("Off", "关机"),
+              pending: view.pending === "off" },
           ],
-          on ? "on" : "off",
+          view.on ? "on" : "off",
           (id) => this._setSwitch(id === "on"),
         ),
       });
