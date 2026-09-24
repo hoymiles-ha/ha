@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Hoymiles Micro Storage",
+        "title": "Hoymiles Official",
         "description": "Discovered {count} device(s). Pick one from the list or type the device id manually. The device id has the form client_prefix-SN.",
         "data": {
           "dev_id": "Device ID"

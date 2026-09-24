@@ -183,7 +183,7 @@ HACS 一共 9 项检查，常见拦截原因：
 
 ### 2.3 下载并重启
 
-1. 在 HACS 集成列表里搜索 **Hoymiles Micro Storage**
+1. 在 HACS 集成列表里搜索 **Hoymiles Official**
 2. 点进去 → **下载** → 选版本（默认最新 Release）→ **下载**
 3. **完整重启 Home Assistant Core**
    （设置 → 系统 → 右上角电源 → 重启 Home Assistant）
@@ -210,7 +210,7 @@ Docker/Core：`docker cp` 或直接 `cp -r`。
 ### 3.1 添加集成（生成设备与实体）
 
 1. **设置 → 设备与服务 → 添加集成**
-2. 搜索 **Hoymiles Micro Storage**
+2. 搜索 **Hoymiles Official**
 3. 集成把发现的设备列进下拉框
    - 也可以直接手输 `dev_id`，形如 `MSA-280520260806`（= `client_prefix-SN`）
 4. 选中 → 提交
@@ -424,7 +424,7 @@ HACS 的检查周期是**硬编码**的（`hacs/integration` 的 `base.py` → `
 
 ### 4.3 用户侧的更新步骤（2 次点击）
 
-1. HACS → 集成 → 找到 **Hoymiles Micro Storage** → **更新**
+1. HACS → 集成 → 找到 **Hoymiles Official** → **更新**
 2. 提示重启时点 **重启 Home Assistant**（**必须完整重启**，不是 reload entry）
 
 ### 4.4 想立刻检查（不等 48 小时）的三种办法
@@ -506,7 +506,7 @@ powershell -ExecutionPolicy Bypass -File scripts\make_brand_icon.ps1
 
 1. **是否完整重启过 HA Core？** 只 reload entry 不够
 2. 检查 `/config/custom_components/hoymiles/manifest.json` 是否存在
-3. 直接在「添加集成」里搜 `Hoymiles Micro Storage`
+3. 直接在「添加集成」里搜 `Hoymiles Official`
    （`manifest/list` WS 命令**看不到未加载的自定义集成**，别用它判断）
 
 ### 5.3 添加集成时下拉框是空的

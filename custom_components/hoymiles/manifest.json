@@ -1,6 +1,6 @@
 {
   "domain": "hoymiles",
-  "name": "Hoymiles Micro Storage",
+  "name": "Hoymiles Official",
   "codeowners": ["@hoymiles-ha"],
   "config_flow": true,
   "dependencies": ["mqtt", "http", "frontend"],

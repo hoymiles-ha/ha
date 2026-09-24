@@ -1,4 +1,4 @@
-# Hoymiles Micro Storage · Home Assistant 集成 (HACS)
+# Hoymiles Official · Home Assistant 集成 (HACS)
 
 把禾迈微储（MS-A2 / HiBattery 4020 X / HiBattery 4020 AC）接入 Home Assistant，
 并提供**分时（TOU）充放电计划**的可视化配置界面。
@@ -95,7 +95,7 @@
 
 1. HACS → 集成 → 右上 ⋮ → **自定义存储库**
 2. 填入仓库地址 `https://github.com/hoymiles-ha/ha`，类别选择 **Integration**
-3. 搜索 `Hoymiles Micro Storage` → **下载**
+3. 搜索 `Hoymiles Official` → **下载**
 4. **完整重启 Home Assistant Core**（不是 reload config entry）
 
 > 为什么必须完整重启：新下载的 Python 模块需要重新 import，
@@ -125,7 +125,7 @@
 
 ## 添加设备
 
-设置 → 设备与服务 → **添加集成** → 搜索 `Hoymiles Micro Storage`。
+设置 → 设备与服务 → **添加集成** → 搜索 `Hoymiles Official`。
 
 集成会自动扫描 retained 的 `homeassistant/switch/+/config` 主题，把发现的
 设备列在下拉框中；也可以手动输入 `dev_id`（例如 `MSA-280520260806`）。

@@ -10,7 +10,7 @@ from typing import Final
 
 DOMAIN: Final = "hoymiles"
 MANUFACTURER: Final = "Hoymiles"
-NAME: Final = "Hoymiles Micro Storage"
+NAME: Final = "Hoymiles Official"
 
 CONF_DEV_ID: Final = "dev_id"
 
