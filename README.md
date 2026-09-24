@@ -1,503 +1,215 @@
-# Hoymiles Official · Home Assistant 集成 (HACS)
+# Hoymiles Official for Home Assistant
 
-把禾迈微储（MS-A2 / HiBattery 4020 X / HiBattery 4020 AC）接入 Home Assistant，
-并提供**分时（TOU）充放电计划**的可视化配置界面。
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2023.8%2B-41BDF5.svg)](https://www.home-assistant.io)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-依据《禾迈微储MQTT协议开发指南 V0.5.1》，设备侧保持"裸 MQTT topic"约定，
-本集成负责：
+Bring a **Hoymiles Micro Storage** system into Home Assistant — with a visual editor for
+**time-of-use (TOU) charge/discharge plans** and **eight purpose-built Lovelace cards**
+that mirror the layout of the Hoymiles app.
 
-- 订阅设备状态 topic 并生成实体（quick / device / system）
-- 订阅 TOU 应答与回显 topic（`tou_day_plan/ack`、`tou_week_plan/ack`、`tou_plan/status`）
-- 提供 TOU 日计划 / 周计划 / 获取计划 / EMS 模式 / 重启的**服务**
-- 提供原生 options 向导，以及**八张捆绑的 Lovelace 卡片**（自动注册前端资源）：
-  - `custom:hoymiles-power-flow` —— 家居功率流总览（光伏 / 微储 / 电网 / 负载）
-  - `custom:hoymiles-battery` —— 电池堆总览（按实际电池包数量自适应，逐包 SOC/温度）
-  - `custom:hoymiles-pack-list` —— 电池包列表（SOC 进度条 / 温度 / 加热状态）
-  - `custom:hoymiles-history-chart` —— 历史曲线（日 / 月 / 年 + 日期导航，读长期统计）
-  - `custom:hoymiles-gauge` —— 单个数值的仪表盘（带量程换挡，如 Wh → kWh）
-  - `custom:hoymiles-control` —— 控制面板（开关机 / EMS / 功率 / 多相 / 重启）
-  - `custom:hoymiles-tou-editor` —— 分时计划可视化编辑器
-  - `custom:hoymiles-energy-sankey` —— 能量流桑基图（读取 HA 长期统计）
+**English** · [简体中文](README.zh-Hans.md)
 
-> 八张卡片都以 `ha-card` 为根、自绘 SVG，**不依赖任何 CDN 或第三方卡片**，
-> 离线环境同样可用；`language` 统一支持 `zh` / `en`。
-
-> 注：集成**复用** Home Assistant 的 MQTT 集成（`dependencies: ["mqtt"]`），
-> 不需要重复填写 Broker 账号密码。
->
-> 发布 / 安装 / 升级的完整操作流程见 **[DEPLOY.md](DEPLOY.md)**。
-
----
-
-## 与固件 discovery 的分工
-
-固件通过 MQTT Discovery 已注册以下实体，集成**不会重复创建**：
-
-| 实体 | topic |
+| Where to go next | |
 |---|---|
-| 设备开关 | `homeassistant/switch/<dev_id>/config` |
-| EMS 模式 | `homeassistant/select/<dev_id>/ems_mode/config` |
-| 功率控制 | `homeassistant/number/<dev_id>/power_ctrl/config` |
-| SOC / 电池功率 | `homeassistant/sensor/<dev_id>/soc|bat_p/config` |
-| 输出功率 / 多相输出功率 | `homeassistant/number/<dev_id>/output_power|phase_output_power/config` |
-| 重启 | `homeassistant/button/<dev_id>/reboot/config` |
-
-因此集成**不创建** `soc` 与 `bat_power` 实体，避免同一数据出现两个实体。
-
-`<dev_id>` = `<mqtt_param.client_prefix>-<SN>`（未配置前缀时仅 SN）。
-
-### 集成会「补丁」固件的 discovery 报文
-
-固件写死的 discovery 报文并不完全符合 Home Assistant 的各域 schema（例如
-`switch` 域缺少 `command_topic`、`soc`/`bat_p` 缺 `state_class`），而 discovery
-**本质上就是 topic 上的一条 retained 报文**。因此集成会订阅本设备的
-`homeassistant/+/<dev_id>/config`，在必要时改写报文并用 `retain=True` 重发，
-**无需刷新固件**。实现见 `discovery_override.py`。
-
-| 话题 | 补丁 | 原因 |
-|---|---|---|
-| `switch/<dev_id>` | 补 `command_topic`；无 `value_template` 时去掉 `state_topic` | 固件 ≤ 1.3.101 没写 `command_topic`，HA 会整条拒绝；而 `state_topic` 指向的 `device/state` 是嵌套 JSON，开关状态永远解不出 `ON`/`OFF`。去掉后变成乐观实体，符合硬件（`ON` 唤醒 / `OFF` 休眠，本就无可读开关状态） |
-| `select/<dev_id>/ems_mode` | 补 `state_topic`（集成自维护话题） | 固件没给状态话题，HA 重启后实体变成 `unknown` |
-| `sensor/<dev_id>/soc`、`bat_p` | 补 `state_class: measurement` | 否则不产生长期统计（LTS） |
-| `number/<dev_id>/phase_output_power` | 补 `command_template` | 固件要求 `{"phase_a":..,"phase_b":..,"phase_c":..}`，而 `number` 实体默认只能发一个数字，实体完全不能用 |
-| 以上全部 | 补 `availability_topic` | 设备停止推送后实体转为 `unavailable`，不再展示陈旧值 |
-| `text/<dev_id>/tou_day1..8`、`tou_week_plan` | **删除**（空 retained payload） | 旧固件遗留的 TOU 文本实体配置，`"mode": "textarea"` 不是合法值，**每次 HA 启动都报错**。当前固件改用 `sensor/<dev_id>/tou_day_plan/set`，且 HA 从未成功建过这些实体 ⇒ 清理零损失 |
-
-> 补丁是**幂等且带判定条件**的：报文已合规时**不会**重发，因此固件修好后这层
-> 自动变成空操作（届时可以删除）。
->
-> 被删除的过期配置同理：删掉后 retained 就不再存在，**不会反复发布**；若某个跑旧固件的设备又把它发回来，会被再次删除（自愈）。
->
-> ⚠️ 副作用：固件每次重连会重发一次自己的（旧）报文，HA 可能在补丁到达前先对旧
-> 报文报一次错；日志里看到 `Invalid config for [switch.mqtt]` 但实体正常，属于正常现象。
-> 反之，即使卸载集成，只要固件重连一次就会用自己的报文覆盖回去，**自带自愈**。
-> 另外，`availability_topic` 与 `ems_mode` 状态话题都位于 `hoymiles/<dev_id>/…` 命名
-> 空间下，与固件话题不冲突。
->
-> ⚠️ HA 不会为**已存在**的实体重建订阅：给实体新增 `state_topic` 这类订阅键需要**完整重启**
-> HA 才生效（`mqtt.reload` 也不一定行）。若设备恰好在 HA 启动瞬间重连、HA 先读到未修正的
-> 报文，个别实体会到下次重启前不跟随状态话题。
-
-#### 开关实体的固件支持情况
-
-补 `command_topic` 只是让 HA **不再拒绝**这条报文，能否真正开关机取决于固件：
-
-| 固件 | `…/switch/…/config` | 订阅 `…/switch/…/set` | 表现 |
-|---|---|---|---|
-| ≤ 1.3.101 | 缺 `command_topic` | ✗ 未订阅 | 补丁后实体出现，但下发无效（设备不响应） |
-| 下一个发版及以后 | 完整 | ✓ 已订阅 | 开关机生效（`ON` 唤醒 / `OFF` 休眠） |
+| Install and use it | this page |
+| Every card option, in full | **[docs/CARDS.md](docs/CARDS.md)** |
+| MQTT topics, firmware discovery patches, entity list | **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** |
+| Publishing a release / maintaining this repo | **[DEPLOY.md](DEPLOY.md)** |
 
 ---
 
-## 安装
+## Highlights
 
-### 方式 A：HACS（推荐）
+- **Plain MQTT, no cloud.** The integration reuses Home Assistant's own MQTT
+  integration (`dependencies: ["mqtt"]`) — no second broker, no account, no cloud hop.
+  Everything stays on your LAN.
+- **Reads the device's real topics.** Entities are created from `quick/state` (1 s),
+  `device/state` (5 min) and `system/state` (5 min), following the
+  *Hoymiles Micro Storage MQTT Protocol Development Guide V0.5.1*.
+- **Fixes what the firmware gets wrong — without a firmware update.** Some firmware
+  builds publish MQTT discovery payloads that Home Assistant rejects outright. The
+  integration rewrites those payloads on the fly and republishes them retained. It is
+  idempotent: once the firmware is fixed, the patch becomes a no-op.
+- **TOU plan editor.** Configure `day1`…`day8`, assign a day plan to each weekday, push
+  them, then switch EMS mode to `tou_plan` — from a native options wizard *or* from a
+  visual card.
+- **Eight bundled Lovelace cards**, registered as frontend modules automatically, so
+  there is no manual "add resource" step. All of them are self-drawn SVG with
+  **no CDN and no third-party card** — they work offline.
+- **Bilingual.** Every card accepts `language: zh` or `language: en`.
+- **Honest availability.** If the device stops pushing, entities turn `unavailable`
+  within 2 minutes instead of showing stale numbers forever.
 
-1. HACS → 集成 → 右上 ⋮ → **自定义存储库**
-2. 填入仓库地址 `https://github.com/hoymiles-ha/ha`，类别选择 **Integration**
-3. 搜索 `Hoymiles Official` → **下载**
-4. **完整重启 Home Assistant Core**（不是 reload config entry）
+## Compatibility
 
-> 为什么必须完整重启：新下载的 Python 模块需要重新 import，
-> 只 reload config entry 不会加载新代码。
+| Item | Requirement |
+|---|---|
+| **Home Assistant** | 2023.8 or newer (declared in `hacs.json`) |
+| **Required integration** | Home Assistant **MQTT**, pointed at the same broker as the device |
+| **Devices** | MS-A2 · HiBattery 4020 X · HiBattery 1920 AC |
+| **Firmware** | Must publish MQTT discovery under the `homeassistant/` prefix |
+| **Recorder** | Optional — only needed by the history chart and the energy sankey |
 
-### 方式 B：手动安装
+> Different models report different data. The cards degrade gracefully: a value the
+> device never publishes simply does not render.
 
-把 `custom_components/hoymiles/` 整个目录拷贝到 HA 配置目录：
+---
+
+## Screenshots
+
+| Home power flow | Battery stack |
+|:---:|:---:|
+| <img src="docs/images/power-flow.png" width="380"> | <img src="docs/images/battery.png" width="260"> |
+
+| Battery pack list | Gauge tiles |
+|:---:|:---:|
+| <img src="docs/images/pack-list.png" width="360"> | <img src="docs/images/gauge.png" width="420"> |
+
+| History chart | Control panel |
+|:---:|:---:|
+| <img src="docs/images/history-chart.png" width="400"> | <img src="docs/images/control.png" width="330"> |
+
+| TOU plan editor |
+|:---:|
+| <img src="docs/images/tou-editor.png" width="420"> |
+
+---
+
+## Installation
+
+### Option A — HACS (recommended)
+
+1. **HACS → Integrations → ⋮ (top right) → Custom repositories**
+2. Repository: `https://github.com/hoymiles-ha/ha` — Category: **Integration**
+3. Search for **Hoymiles Official** and click **Download**
+4. **Restart Home Assistant Core completely** (not just "Reload config entry")
+
+> Why a full restart: the newly downloaded Python modules have to be re-imported.
+> Reloading the config entry alone will not load new code.
+
+### Option B — Manual
+
+Copy the whole `custom_components/hoymiles/` folder into your Home Assistant
+configuration directory:
 
 ```
 /config/custom_components/hoymiles/
 ```
 
-然后**完整重启** Home Assistant（不是重载）。
+Then **restart Home Assistant completely**.
 
-拷贝到树莓派/HAOS 的常见做法：
-- HAOS / Supervised：装 Samba share 或 SSH add-on，访问 `\\<host>\config\custom_components\`
-- HA Core / Docker：`cp -r hoymiles /config/custom_components/` 或 `docker cp`
+Typical ways to get the files onto a Raspberry Pi / HAOS box:
 
-### 前置条件
+- **HAOS / Supervised** — install the Samba share or SSH add-on and browse to
+  `\\<host>\config\custom_components\`
+- **HA Core / Docker** — `cp -r hoymiles /config/custom_components/` or `docker cp`
 
-- Home Assistant `2023.8` 或更高（`hacs.json` 已声明最低版本）
-- 已安装并配置 Home Assistant 的 **MQTT 集成**
-- 固件已连接同一个 Broker，并使用 `homeassistant/...` 前缀发布 discovery
+### Prerequisites
 
----
-
-## 添加设备
-
-设置 → 设备与服务 → **添加集成** → 搜索 `Hoymiles Official`。
-
-集成会自动扫描 retained 的 `homeassistant/switch/+/config` 主题，把发现的
-设备列在下拉框中；也可以手动输入 `dev_id`（例如 `MSA-280520260806`）。
+- Home Assistant **2023.8+**
+- The **MQTT integration** installed, configured and connected
+- The device connected to the *same* broker, publishing discovery on `homeassistant/...`
 
 ---
 
-## 配置 TOU 计划
+## Adding your device
 
-有两条路径，效果一致：
+**Settings → Devices & Services → Add Integration → search "Hoymiles Official".**
 
-### 1) 原生 options 向导
-设备卡片 → **配置**：
+The integration scans retained `homeassistant/switch/+/config` topics and lists every
+device it finds in a dropdown, so you normally just pick one. You can also type the
+`dev_id` by hand (for example `MSA-280520260806`).
 
-| 菜单 | 说明 |
+The `dev_id` is `<client_prefix>-<SN>`, or just the SN when no prefix is configured.
+
+---
+
+## Quick start
+
+Once the device is added you get entities plus eight cards. A minimal dashboard:
+
+```yaml
+type: vertical-stack
+cards:
+  - type: custom:hoymiles-power-flow
+    dev_id: MSA-280520260806
+    language: en
+
+  - type: custom:hoymiles-battery
+    dev_id: MSA-280520260806
+
+  - type: grid
+    columns: 3
+    square: false
+    cards:
+      - type: custom:hoymiles-gauge
+        entity: sensor.msa_280520260806_system_pv_energy_today
+        name: PV today
+        unit: kWh
+        scale: 0.001
+        icon: ☀️
+        max: 10
+      - type: custom:hoymiles-gauge
+        entity: sensor.msa_280520260806_battery_discharge_energy_today
+        name: Discharged
+        unit: kWh
+        scale: 0.001
+        icon: 🔋
+      - type: custom:hoymiles-gauge
+        entity: sensor.msa_280520260806_battery_charge_energy_today
+        name: Charged
+        unit: kWh
+        scale: 0.001
+        icon: ⚡
+```
+
+Configuring a TOU plan, either way works:
+
+- **Native wizard** — device card → **Configure** → *Edit day plan* / *Edit week plan* /
+  *Get current plan* / *Set EMS mode* / *Reboot device*
+- **Card** — `type: custom:hoymiles-tou-editor`. It only renders the editor while EMS
+  mode is `tou_plan`; set `require_tou_mode: false` to disable that gate.
+
+---
+
+## The eight cards
+
+| Card | What it does |
 |---|---|
-| 编辑日计划 | 选择 `day1..day8` 与段数，逐段填写 mode / ts / te / sh / sl / pc / pd |
-| 编辑周计划 | 为周一~周日各选一个日计划（或 `none`） |
-| 获取当前计划 | 按星期查询设备当前计划，结果进状态实体 + 通知 |
-| 设置 EMS 模式 | `general` / `mqtt_ctrl` / `tou_plan` |
-| 重启设备 | 发送 `RESTART` |
+| `custom:hoymiles-power-flow` | Home illustration with live PV / storage / grid / load power and animated flow |
+| `custom:hoymiles-battery` | Battery stack drawn to match the *actual* pack count (1–4), with per-pack SOC & temperature |
+| `custom:hoymiles-pack-list` | Compact pack list — SOC bar, temperature, heating flag |
+| `custom:hoymiles-history-chart` | Day / month / year curves with date navigation, reads long-term statistics |
+| `custom:hoymiles-gauge` | Single-value gauge with range switching (e.g. Wh → kWh) |
+| `custom:hoymiles-control` | On/off, EMS mode, power, per-phase output, TOU fetch, reboot |
+| `custom:hoymiles-tou-editor` | Visual TOU plan editor |
+| `custom:hoymiles-energy-sankey` | Energy-flow sankey built from long-term statistics |
 
-### 2) 捆绑的 Lovelace 卡片
-集成启动时会自动把 `hoymiles-tou-editor.js` 注册为前端模块，**无需手动添加资源**。
+Each card is rooted at `ha-card`, is self-drawn SVG, and needs no CDN.
 
-添加卡片：
+**→ Complete option reference for every card: [docs/CARDS.md](docs/CARDS.md)**
 
-```yaml
-type: custom:hoymiles-tou-editor
-dev_id: MSA-280520260806
-language: zh
-```
-
-卡片只有在 EMS 模式为 `tou_plan` 时才渲染编辑界面（`require_tou_mode: false` 可关闭该门控）。
-卡片会依次下发 `day1..day8` 日计划 → 周计划 → 切到 `tou_plan` → 回读当天计划。
-
-> 设备的 `ems_mode` 是早期固件未提供 `state_topic`，集成会给它补一个**自维护的
-> retained 状态话题** `hoymiles/<dev_id>/ems_mode/state`：
->
-> - 任何人向 `…/ems_mode/command` 下发后，集成立即回显到该话题 → 界面/卡片即时刷新；
-> - 同时跟随 `system/state` 里的 `ems_mode`（设备真实运行模式，5 分钟周期）
->   进行纠正，所以设备侧超时自动回退到 `general` 也能反映出来。
->
-> 为什么不直接把 `state_topic` 指向 `system/state`：该话题只有 5 分钟周期，而本卡片
-> 是用 select 状态做门控的，那样会让“切到 tou_plan”后最多卡 5 分钟。
+> Cards are injected as frontend modules when the integration starts. If the UI does not
+> pick up a change, hard-refresh the browser (`Ctrl` + `F5`).
 
 ---
 
-## 功率流总览卡片
+## Services
 
-把「家」画出来，并把实时的光伏 / 微储 / 电网 / 负载功率叠加在插图上，和手机 App
-首页一致。
-
-```yaml
-type: custom:hoymiles-power-flow
-dev_id: MSA-280520260806
-title: 我的家            # 可选，默认「我的家」
-show_title: false        # 可选，false 隐藏标题与设备 SN（只留右侧信号图标）
-language: zh             # 可选 en|zh
-temperature_entity: sensor.outdoor_temperature   # 可选，标题右侧显示温度
-show_rssi: true          # 可选，右上角信号扇形（默认 true）
-show_extras: true        # 可选，左上角「光伏2 / 智能插座」小气泡（默认 true）
-gradient: true           # 可选，浅色渐变底（默认 true）
-max_width: 620           # 可选，插图最大宽度
-flow_speed: 1            # 可选，流动珠子速度倍数（0.5 = 更慢，2 = 更快）
-```
-
-珠子沿连线的走完时间**按路径长度算**，所以短线与长线速度一致；默认已调得比较从容
-（1059 W 时 325px 的光伏连线约 3.8 秒跑完）。觉得还快/还慢就用 `flow_speed` 整体调。
-
-数据全部来自 MQTT 实体（**不依赖 recorder**）：
-
-| 节点 | 实体后缀（`sensor.<dev>_…`） |
+| Service | Purpose |
 |---|---|
-| 光伏 | `system_pv_power`（缺失时回退 `pv_power`） |
-| 微储 | `system_battery_power`（负=充电）+ `system_soc` |
-| 电网 | `system_grid_power`（正=受电） |
-| 负载 | `system_load_power` |
-| 光伏2 气泡 | `system_pv2_power` |
-| 智能插座气泡 | `system_smart_plug_power` |
-| 状态气泡 | `battery_status`（`standby`/`charge`/`discharge`/`lock`） |
-| 信号扇形 | `rssi`（dBm） |
+| `hoymiles.set_tou_day_plan` | Push the day plan for one of `day1`…`day8` |
+| `hoymiles.set_tou_week_plan` | Map weekdays to day plans |
+| `hoymiles.get_tou_plan` | Query the device's current plan |
+| `hoymiles.set_ems_mode` | Switch EMS mode (`general` / `mqtt_ctrl` / `tou_plan`) |
+| `hoymiles.set_phase_output_power` | Set A/B/C phase output limits in one call |
+| `hoymiles.reboot` | Restart the device |
 
-- 连线只有该支路功率 ≥ 5 W 时才显示流动小球，球的颜色随支路变化，速度随功率加快。
-- 「微储」气泡显示电池真实状态；「电网」气泡显示 `电网输入` / `电网输出`。
-- **卡片右上角是 RSSI 信号图标**（与「电池卡片」及 App 的 Wi-Fi 图标同款）：
-  四根高度递增的信号条，点亮的条数（0~4）表示信号质量，旁边直接跟 `-21 dBm`
-  读数，悬停可看「优秀 / 良好 / 一般 / 较弱」：
+Target the device with **one** of:
 
-  | RSSI | 点亮条数 |
-  |---|---|
-  | ≥ -55 dBm | 4（优秀） |
-  | ≥ -65 dBm | 3（良好） |
-  | ≥ -75 dBm | 2（一般） |
-  | < -75 dBm | 1（较弱） |
-
-  设备不上报 `rssi` 时自动隐藏，不需要可以把 `show_rssi` 设为 `false`。
-- **左上角两个小气泡（光伏2 / 智能插座）** 用来补齐插图上没有节点的两条支路。
-  设备侧的负载是这么算出来的：
-
-  ```
-  负载 = 电网 + 插座 + 光伏2 − 智能插座
-  ```
-
-  也就是说「光伏2」和「智能插座」参与了 `负载` 的计算，但插图上只有「光伏」一个
-  节点，只看四个大数字是对不上账的，所以把这两路单独做成小气泡显示。
-  从机不上报这两个字段时（读到 `null`）气泡自动隐藏；**读数正好为 0 时也不显示**
-  （该支路没有功率流动，不必占地方），两件事同时发生时插图上就不会出现气泡。
-  只上报一个时，剩下的那个会顶到最上面，不会留空位。整组关掉用
-  `show_extras: false`。
-- 单独覆盖某个实体用 `entities:` 段，例如 `entities: { pv: sensor.my_pv, rssi: sensor.my_rssi }`。
-
-## 电池卡片
-
-按**实际电池包数量**自适应绘制电池堆：1～4 个电池包各对应一种外形，每个模组
-配一个左右交替的气泡显示自己的 SOC 与温度（和 App 的 HiBattery X 页面一致）。
-
-```yaml
-type: custom:hoymiles-battery
-dev_id: MSA-280520260806
-title: HiBattery 4020 X   # 可选，默认自动读设备型号
-show_title: false         # 可选，false 隐藏标题
-language: zh              # 可选 en|zh
-show_history: true        # 可选，默认 true（需启用 recorder）
-max_width: 560            # 可选，插图最大宽度
-alarm_entity: binary_sensor.x   # 可选，为 on 时标题左侧显示铃铛
-```
-
-- **标题默认取设备注册表里的型号**（本机实测为 `HiBattery 4020 X`，来源于固件 MQTT
-discovery 的 `device.model`），所以换机型不用改卡片配置；显式写 `title` 则覆盖它。
-- 电池数量优先取 `pack_count`（`device/state` 的 `pack_num`），缺失时按实际能读到
-  SOC 的 `pack1_soc`…`pack4_soc` 推断，上限 4（与固件 `packs` 截断一致）。
-- 逐包数据用 `pack<i>_soc` / `pack<i>_temperature`；四周功率用 `pv_power`、
-  `grid_on_power`、`grid_off_power`、`battery_power`。
-- 标题右侧的信号格数由 `rssi`（dBm）换算。
-- 历史数据区（可选）通过 `recorder/statistics_during_period` 读取长期统计，画 SOC
-  曲线并汇总该区间的充电 / 放电电量；recorder 未启用时只提示、不影响其余部分。
-
-## 电池包列表卡片
-
-电池堆插图的紧凑替代：一行一个电池包，左侧 SOC 进度条、右侧 SOC 百分比与加热标记。
-包数量与电池卡片用同一套规则（`pack_count` 优先，缺失时按能读到 SOC 的包推断）。
-
-```yaml
-type: custom:hoymiles-pack-list
-dev_id: MSA-280520260806
-language: zh
-title: 电池电量
-columns: 2                  # 可选，按 N 列排布；不填为单列
-show_temperature: false     # 可选，默认 true；false 时只显示 SOC
-```
-
-## 历史数据卡片
-
-按**日 / 月 / 年**查看曲线，并可用 `‹` `›` 或日期输入框翻到任意时间段。
-正值向上、负值向下堆叠，因此「充电 / 放电」这类双极性传感器会自然地分居 0 线两侧。
-
-```yaml
-type: custom:hoymiles-history-chart
-dev_id: MSA-280520260806      # 可选（所有 series 都给了 entity 时可省）
-title: 历史数据
-language: zh
-range: day                    # 初始范围 day | month | year
-height: 330                   # 可选，SVG 高度
-unit: W                       # 可选，纵轴单位（超过 1.5 kW 自动换成 kW）
-zero_line: true               # 可选，是否画 0 线（默认 true）
-symmetric: true               # 可选，false = 从 min 到 max 自底向上（SOC 用）
-min: 0                        # 可选，固定下限
-max: 100                      # 可选，固定上限
-span: 2500                    # 可选，对称模式下固定半量程
-sync_group: living-room       # 可选，同一组的卡片共享时间窗口
-show_toolbar: false           # 可选，隐藏本卡的时间控件（给跟随卡用）
-series:                       # 必填，每条曲线一项
-  - entity: sensor.x_pv_power
-    name: 发电功率
-    color: "#22c55e"
-  - entity: sensor.x_system_battery_power
-    name: 放电[+]/充电[-]
-    color: "#4a90d9"
-```
-
-### 时间选择器
-
-顶栏与厂商 App 的历史页一致：**左上角是日期胶囊（圆形 `‹` `›` 包着日期），右上角是范围下拉（日 / 月 / 年）**；
-曲线下方的图例也是 App 那种圆角胶囊（彩色圆盘 + 名称）。
-
-- `show_toolbar: false` 可以把它隐掉 —— 配合 `sync_group` 就能做成「上面一张图控制、
-  下面几张图只跟随」的仪表盘（参考：系统状态页的「历史数据」驱动「电池容量(SOC)」）。
-- `sync_group` 相同的卡片共享**范围 + 日期**，任一张上的操作都会同步到组内其他卡；
-  不写 `sync_group` 的卡片各管各的，不受影响。
-- 卡片被移除时会自动从组里注销，不会残留。
-
-- 数据同样来自 `recorder/statistics_during_period`（长期统计，**无需管理员权限**）。
-- 纵轴刻度会按实际步长自动决定小数位（例如 1.25 kW 的步长会显示 `1.25` 而不是取整成 `1`）。
-- 固定 `span` / `min` / `max` 可让同一组曲线在不同日子保持同一量程，便于横向对比。
-- **点击下方图例可以高亮某条曲线**：选中的曲线加粗提亮，其余曲线淡入背景；
-  再点同一条、或点图表区域即取消高亮。悬停浮窗里被淡化的曲线会同步降低透明度。
-- **鼠标移到图上时，同一 `sync_group` 的其它图表会在同一时间点显示引导线和浮窗**
-  （如上图的「历史数据」与下面的「电池容量(SOC)」）；移开后一并消失。匹配按
-  时间戳进行，所以两张图即使分桶粒度或数据缺口不同也能对上。
-
-## 仪表盘卡片
-
-一张**统计卡**：左上标题、右上图标、中间大字数值，下方**一条绿弧**按数值占
-`min`~`max` 的百分比填充，弧中央同时显示该百分比。HA 自带 `gauge` 卡片的轻量
-替代，另针对本设备做了两点补齐：
-
-- **可以换单位**（`scale`），直接把 Wh 传感器显示成 kWh，不需要额外的 template 传感器；
-- **可以不给 `max`**，此时弧线随数值增长（适合「今日充电量」这类没有固定上限的量）。
-
-```yaml
-type: custom:hoymiles-gauge
-entity: sensor.msa_280520260806_battery_charge_energy_today
-name: 今日充电量
-unit: kWh                 # 可选，显示单位
-scale: 0.001              # 可选，显示前的换算系数（Wh → kWh）
-max: 10                   # 可选（显示单位）；不填表示自适应
-min: 0                    # 可选，默认 0
-decimals: 2               # 可选，默认 2
-icon: ⚡                   # 可选，标题右侧的图标
-label: 自发自用率          # 可选，百分比下方的说明文字
-color: "#22c55e"          # 可选，弧线颜色（默认绿色）
-```
-
-- 百分比 = `(值 - min) / (max - min) × 100`，四舍五入到整数；值超出量程时钳到 0~100%。
-- 实体还没上报数据时仍画出空弧，数值与百分比显示 `—`，卡片不会变成一片空白。
-- 把 `max` 设为 100 并直接接 SOC 传感器，就是一张电池电量表。
-
-## 控制面板卡片
-
-把《禾迈微储 MQTT 协议开发指南 V0.5.1》里**所有可下发的控制**做成按钮 / 输入框。
-指令**直接发布到协议 topic**（qos 1、retain false），因此即使某个 discovery 实体缺失
-或选项列表比协议窄，卡片也仍可用；当前值则从对应实体回读。
-
-布局参考 iOS 设置页：小组件包在圆角分组里、组间有灰色小节标题（**电源与模式 /
-功率设置 / 计划与维护**）、每行是「图标 + 名称 + 右侧控件」，分割线**左侧内缩**；
-开关机与 EMS 模式用**分段控件**，危险操作（重启）用红色。
-
-```yaml
-type: custom:hoymiles-control
-dev_id: MSA-280520260806
-language: zh
-title: 设备控制
-show_power_ctrl: true     # 可选，默认 true（隐藏「功率控制」行）
-show_phase: true          # 可选，默认 true（隐藏「多相输出功率」行）
-show_topics: true         # 可选，默认 false；在每行下方显示 MQTT 主题（调试用）
-subtitle: false           # 可选；隐藏标题右侧的灰色说明
-```
-
-| 行 | 协议 topic | 说明 |
-|---|---|---|
-| 设备开关 | `switch/<dev_id>/set` | `ON` / `OFF` |
-| EMS 模式 | `select/<dev_id>/ems_mode/command` | `general` / `mqtt_ctrl` / `tou_plan`，不支持的选项自动置灰 |
-| 功率控制 | `number/<dev_id>/power_ctrl/set` | 仅 `mqtt_ctrl` 模式有效，需至少每分钟下发一次 |
-| 输出功率 | `number/<dev_id>/output_power/set` | 满载输出上限（W） |
-| 多相输出功率 | `number/<dev_id>/phase_output_power/set` | 按 `{"phase_a":..,"phase_b":..,"phase_c":..}` 下发 |
-| 获取 TOU 计划 | `sensor/<dev_id>/tou_plan/get` | 应答发布在 `tou_plan/status` |
-| 重启设备 | `button/<dev_id>/reboot/trigger` | 二次确认后发 `RESTART` |
-
-> 卡片的范围提示（如 `-1000 ~ 1000 W`）优先读实体的 `min` / `max` 属性，
-> 读不到时用协议默认值。
-> 每行的 MQTT topic **默认不显示**（它们是调试信息，会挤掉正文）；需要时用
-> `show_topics: true` 打开，会以灰色小字排在名称下方。
-
----
-
-## 能量流桑基图
-
-集成捆绑了一张能量流桑基图卡片，同样**无需手动添加前端资源**。
-
-```yaml
-type: custom:hoymiles-energy-sankey
-dev_id: MSA-280520260806
-title: 能量流
-language: zh
-range: today          # today | 7d | 30d | month
-```
-
-| 参数 | 说明 |
-|---|---|
-| `dev_id` | **必填**，设备标识（`<client_prefix>-<SN>`） |
-| `title` | 卡片标题 |
-| `language` | `zh` / `en` |
-| `range` | 时间范围：`today`（默认）/ `7d` / `30d` / `month` |
-| `balancer_label` | 「损耗/其他」或「未计量」节点的自定义名称 |
-| `statistics` | 覆盖默认 statistic_id（字符串或数组） |
-| `show_toolbar` | `false` 隐藏时间段切换栏 |
-
-### 数据来源
-
-卡片调用 HA 官方的 WebSocket 统计接口读取**长期统计**：
-
-```
-recorder/statistics_during_period
-  statistic_ids: [...]   # 本设备的能量传感器
-  period: "day"
-  units: {energy: "kWh"} # 由服务端换算单位
-  types: ["change"]      # HA 已算好的区间增量
-```
-
-因此：
-
-- **不接触** recorder 数据库文件（不读 SQLite、不受 schema 迁移影响）
-- **不需要管理员权限**（`statistics_during_period` 没有 `require_admin`）
-- 只依赖 recorder 集成（属于 `default_config`）
-- 渲染是自绘 SVG，**不依赖 CDN**，离线也能用
-
-### 关于「损耗/其他」节点
-
-桑基图要求流量守恒，而设备各端口是**独立计量**的（转换损耗、采样相位、
-未计量负载都会造成差额）。卡片**不做归一化缩放**，而是把差额显式画成一个
-节点（正差额记为「损耗/其他」，负差额记为「未计量」），
-保证图面守恒且各条数值真实。
-
-### 与官方能源仪表盘的关系
-
-HA 自带能源仪表盘有 Sankey 风格的「能量分布」卡片，但节点固定为
-**光伏 / 电网 / 电池 / 家庭** 四类。配置方法：
-
-| 位置 | 建议实体 |
-|---|---|
-| 太阳能 | `sensor.<dev>_system_pv_energy_today` |
-| 电网受电 | `sensor.<dev>_grid_on_energy_in_total` |
-| 电网送电 | `sensor.<dev>_grid_on_energy_out_total` |
-| 电池充电 | `sensor.<dev>_battery_charge_energy_today` |
-| 电池放电 | `sensor.<dev>_battery_discharge_energy_today` |
-
-> **优先用 `*_total` 累计口径**（`grid_on_*` / `inv_*` 的 `etin` / `etout`）。
-> `*_today` 型每天清零，HA 在**长时间停机后**会把"跨天下降"识别为设备重置，
-> 中间天数的增量会丢失；累计型没有这个问题。
-
-设备特有的 **EPS / 插座 / 离网** 端口官方模型装不下，那部分用本卡片展示。
-
----
-
-## 更新
-
-集成通过 HACS 管理更新，厂商发版后：
-
-- HACS 最长 **48 小时**检查一次新版本，**HA 每次启动也会立即检查**
-- 有新版本时，HACS 侧边栏出现红点、**设置 → 系统 → 更新** 出现 `update` 实体、并弹一条通知
-- 用户点 **更新** → 提示后 **重启 Home Assistant Core** 即生效
-
-> HACS 的检查间隔是**硬编码**的，HACS 配置里没有这个选项。
-> 想立刻检查：重启 HA，或在 HACS 面板手动重载，或对 update 实体调
-> `homeassistant.update_entity`（可写成自动化，但别太频繁，否则会触发 GitHub 限流）。
-
-前端卡片改动后若界面没变化，请**硬刷新浏览器**（`Ctrl` + `F5`）。
-
-更新后同目录的手动安装方式不会自动升级，需要重新拷贝文件并完整重启。
-
----
-
-## 服务
-
-| 服务 | 说明 |
-|---|---|
-| `hoymiles.set_tou_day_plan` | 下发某一天日计划 |
-| `hoymiles.set_tou_week_plan` | 下发星期与日计划映射 |
-| `hoymiles.get_tou_plan` | 查询某一天计划 |
-| `hoymiles.set_ems_mode` | 切换 EMS 模式 |
-| `hoymiles.set_phase_output_power` | 一次性设置 A/B/C 三相输出功率限值 |
-| `hoymiles.reboot` | 重启设备 |
-
-目标设备二选一：
-
-- **`device_id`** —— 在 UI 里从设备下拉中选择（推荐，自动补全）
-- **`dev_id`** —— 直接填设备标识字符串，如 `MSA-280520260806`
-
-> ⚠️ 服务**不支持** `target.device` 这种写法 —— HA 明确禁止在服务的 `target`
-> 下使用 device 过滤器，设备只能通过上面的 `device_id` 字段（device selector）指定。
-
-示例：
+- `device_id` — pick from the device dropdown in the UI (recommended, auto-completes)
+- `dev_id` — the identifier string, e.g. `MSA-280520260806`
 
 ```yaml
 service: hoymiles.set_tou_day_plan
@@ -509,86 +221,98 @@ data:
     - {mode: 4, ts: 5, te: 96, sh: 55, sl: 10, pc: 1000, pd: 1000}
 ```
 
-在 UI 里也可以这样选设备：
-
-```yaml
-service: hoymiles.reboot
-data:
-  device_id: 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d   # 从设备下拉里选
-```
+> ⚠️ `target.device` is **not** supported — Home Assistant forbids the device filter
+> there. Use the `device_id` field (device selector) as shown above.
 
 ---
 
-## 实体
+## Entities
 
-| 平台 | 来源 | 示例 |
+| Platform | Source | Examples |
 |---|---|---|
-| `sensor` | `quick/state`（1s，所有角色） | `PV Power`、`Grid On Power`、`Battery Status`、`System SOC` |
-| `sensor` | `device/state`（5min，所有角色） | `Grid On Voltage`、`Inverter Power`、`PV1 Power`、`Pack 1 SOC`、`Battery Temperature` |
-| `sensor` | `system/state`（5min，仅主机/单机） | `System PV Energy Today`、`Battery Charge Energy Today`、`EMS Mode (Device)` |
-| `sensor` | TOU topic | `TOU Plan Status`、`TOU Day Plan Ack`、`TOU Week Plan Ack` |
-| `binary_sensor` | `quick/state`、`device/state` | `Heating`、`System Heating`、`Pack N Heating` |
-| `number` | 集成本地（`phase_output_power/set`） | `Phase A/B/C Output Power` |
+| `sensor` | `quick/state` (1 s, all roles) | `PV Power`, `Grid On Power`, `Battery Status`, `System SOC` |
+| `sensor` | `device/state` (5 min, all roles) | `Grid On Voltage`, `Inverter Power`, `PV1 Power`, `Pack 1 SOC`, `Battery Temperature` |
+| `sensor` | `system/state` (5 min, master / standalone only) | `System PV Energy Today`, `Battery Charge Energy Today`, `EMS Mode (Device)` |
+| `sensor` | TOU topics | `TOU Plan Status`, `TOU Day Plan Ack`, `TOU Week Plan Ack` |
+| `binary_sensor` | `quick/state`, `device/state` | `Heating`, `System Heating`, `Pack N Heating` |
+| `number` | integration-local | `Phase A/B/C Output Power` |
 
-> `system/state` 与 `quick/state` 的 `sys_*` 字段仅主机/单机发布；从机上这些实体为 `unknown`。
-> `pv_num` / `pvs` 字段在 PID=0x2806 的机型上不发布，`PV1..PV4 Power` 为 `unknown`。
-
-### 设备离线时的可用性
-
-所有实体都带可用性判定：`quick/state` 超过 2 分钟（或 `device/state`、
-`system/state` 超过 11 分钟）没收到推送，集成就会把 `hoymiles/<dev_id>/availability`
-置为 `offline`，**固件 discovery 的实体与集成自己的实体会一起转为 `unavailable`**，
-避免继续展示陈旧值。恢复推送后自动变回 `online`。
-
-### 多相输出功率
-
-三相限值设备**不会回读**，因此 `Phase A/B/C Output Power` 展示的是"最后一次下发值"
-（跨 HA 重启会通过实体状态恢复）。任一相从未设置过时会回退到协议下限 100 W，
-并打一条 warning；想避免这种情况请用 `hoymiles.set_phase_output_power` 一次设齐三相。
-
-固件自带的 `phase_output_power` 实体被补上 `command_template` 后也能用，语义是
-**一个值同时应用到三相**（固件只接受完整的三相 JSON）。
+For the full topic map, the firmware discovery patches and the availability logic, see
+**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ---
 
-## 排错
+## Updates
 
-| 现象 | 处理 |
+Updates are handled by HACS. After a vendor release:
+
+- HACS checks at most once every **48 hours**; **Home Assistant also checks on every start**
+- When a new version exists you get a badge in the HACS sidebar, an `update` entity under
+  **Settings → System → Updates**, and a notification
+- Click **Update**, then **restart Home Assistant Core**
+
+> The 48-hour interval is hard-coded in HACS — it is not a configurable option. To check
+> immediately, restart Home Assistant, reload the HACS panel, or call
+> `homeassistant.update_entity` on the `update` entity (fine in an automation, but do not
+> overdo it or GitHub will rate-limit you).
+
+Manual installs are **not** upgraded automatically — copy the files again and restart.
+
+---
+
+## Troubleshooting
+
+| Symptom | What to do |
 |---|---|
-| 添加集成时列表为空 | 确认 MQTT 集成已配置、Broker 地址一致；设备需已连接并发过 retained discovery |
-| 实体一直 `unknown` | 确认 `dev_id` 大小写与 topic 完全一致；`system/state` 仅在主机/单机发布 |
-| 卡片找不到 | 集成启动后会自动注入前端模块；若浏览器缓存旧版请强制刷新 |
-| 下发 TOU 报 `10` | 表示设备当前不是 `tou_plan` 模式，先调用 `hoymiles.set_ems_mode` |
-| 日志报 `Invalid config for [switch.mqtt]` | 固件重连时先发了自己的旧报文，集成会在毫秒内补上；实体正常则无需理会 |
-| 日志报 `mode: textarea` 或 `does not generate unique IDs` | 前者是本集成会自动清理的旧固件遗留（升级后应消失）；后者是旧固件把多个 config 的 `unique_id` 写成同一个值，**只影响未被本集成管理的设备**，需升级固件消除 |
-| 开关状态显示 `unknown` | 已按设计改为乐观实体，只能反映本集成下发的状态（设备无开关状态回读） |
-| 实体全部 `unavailable` | 检查设备是否在推送；`quick/state` 停超 2 分钟即判定离线 |
-| 新增 `state_topic` 后实体不跟随 | HA 不会为已存在实体重建订阅，需**完整重启** HA Core |
-| 云平台下载的集成不生效 | 树莓派旧版 HA 注意最低版本要求，或改用"手动拷贝 + 重启"方式 |
+| No devices listed when adding the integration | Check the MQTT integration is configured and points at the same broker; the device must have connected and sent its retained discovery |
+| Entities stay `unknown` | Confirm the `dev_id` case matches the topics exactly; `system/state` is published by master / standalone units only |
+| Card not found | The integration injects the frontend module at startup — hard-refresh the browser if you see a stale version |
+| TOU write returns `10` | The device is not in `tou_plan` mode. Call `hoymiles.set_ems_mode` first |
+| Log: `Invalid config for [switch.mqtt]` | The firmware republished its own outdated payload on reconnect; the patch lands milliseconds later. Harmless if the entity works |
+| Log: `mode: textarea` / `does not generate unique IDs` | The first is a stale firmware leftover that this integration cleans up automatically; the second affects devices this integration does not manage and needs a firmware update |
+| Switch state shows `unknown` | By design — the entity is optimistic because the hardware has no readable on/off state |
+| All entities `unavailable` | The device is not pushing. `quick/state` silence for 2 minutes marks it offline |
+| After adding a `state_topic`, the entity does not follow | Home Assistant does not rebuild subscriptions for existing entities — do a **full restart** |
+| A cloud-downloaded integration does nothing | Check the minimum version requirement, or fall back to "copy files + restart" |
+
+More troubleshooting, including HACS icon and release quirks, is in
+**[DEPLOY.md](DEPLOY.md)**.
 
 ---
 
-## 目录结构
+## Repository layout
 
 ```
 hoymiles-ha/
-├── hacs.json
-├── README.md
+├── hacs.json                     HACS metadata
+├── README.md                     this file (English)
+├── README.zh-Hans.md             Chinese edition
+├── DEPLOY.md                     release / maintenance runbook
+├── docs/
+│   ├── CARDS.md                  full card option reference
+│   ├── ARCHITECTURE.md           MQTT topics, discovery patches, entity model
+│   └── images/                   screenshots used above
+├── scripts/                      brand artwork generator
 └── custom_components/hoymiles/
-    ├── __init__.py          入口 / 前端资源注册
+    ├── __init__.py               entry point / frontend asset registration
     ├── manifest.json
-    ├── const.py             topic 模板、常量、应答状态码
-    ├── mqtt_util.py         MQTT 收发与设备自动发现
-    ├── coordinator.py       MQTT 推送型 DataUpdateCoordinator + 可用性判定
-    ├── discovery_override.py 固件 discovery 报文补丁
-    ├── sensor.py            状态传感器 + TOU 回显/应答传感器
-    ├── binary_sensor.py     加热状态
-    ├── number.py            三相输出功率
-    ├── config_flow.py       设备发现与接入
-    ├── options_flow.py      TOU 配置向导
-    ├── services.py          hoymiles.* 服务
+    ├── const.py                  topic templates, constants, reply codes
+    ├── mqtt_util.py              MQTT publish/subscribe + device auto-discovery
+    ├── coordinator.py            push-based DataUpdateCoordinator + availability
+    ├── discovery_override.py     firmware discovery payload patching
+    ├── sensor.py                 state sensors + TOU echo/ack sensors
+    ├── binary_sensor.py          heating states
+    ├── number.py                 per-phase output power
+    ├── config_flow.py            device discovery & setup
+    ├── options_flow.py           TOU configuration wizard
+    ├── services.py               hoymiles.* services
     ├── services.yaml
     ├── strings.json
-    ├── translations/        en / zh-Hans
-    └── www/hoymiles-tou-editor.js
+    ├── translations/             en / zh-Hans
+    ├── brand/                    icon.png + logo.png
+    └── www/                      the eight Lovelace cards (JS)
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

@@ -24,9 +24,16 @@
 │       └── validate.yml              # CI: HACS + hassfest 校验
 ├── .gitignore
 ├── LICENSE                           # HACS 必需：OSI 认可的开源协议
-├── README.md                         # HACS 必需：仓库根的信息文件
+├── README.md                         # HACS 必需：仓库根的信息文件（英文，HACS 渲染这一份）
+├── README.zh-Hans.md                 # 中文版说明
 ├── DEPLOY.md                         # 本文件
 ├── hacs.json                         # HACS 必需：清单
+├── docs/
+│   ├── CARDS.md                      # 八张卡片参数总表
+│   ├── CARDS.zh-Hans.md              #   中文版
+│   ├── ARCHITECTURE.md               # MQTT 话题 / discovery 补丁 / 实体模型
+│   ├── ARCHITECTURE.zh-Hans.md       #   中文版
+│   └── images/                       # README 引用的界面截图
 ├── scripts/
 │   ├── brand-source.png              # 官方 logo 原始稿（设计源，不随集成下发）
 │   ├── make_brand_from_official.ps1  # ★ 从官方 logo 生成 icon.png + logo.png
@@ -39,7 +46,13 @@
         │   ├── icon.png              # HACS 品牌校验必需；本地图标可免去上游 PR
         │   └── logo.png              # 横向锁定版：圆标 + 字标
         ├── manifest.json             # 必需，含 version（HACS 硬性要求）
-        ├── www/
+        ├── www/                      # 八张 Lovelace 卡片
+        │   ├── hoymiles-power-flow.js
+        │   ├── hoymiles-battery.js
+        │   ├── hoymiles-pack-list.js
+        │   ├── hoymiles-history-chart.js
+        │   ├── hoymiles-gauge.js
+        │   ├── hoymiles-control.js
         │   ├── hoymiles-tou-editor.js
         │   └── hoymiles-energy-sankey.js
         └── ... (config_flow / sensor / services ...)
@@ -82,7 +95,7 @@ foreach ($f in @("LICENSE","README.md","hacs.json",".gitignore",
 | 文件 | 字段 |
 |---|---|
 | `custom_components/hoymiles/manifest.json` | `codeowners`、`documentation`、`issue_tracker` |
-| `README.md` | 安装说明里的仓库地址 |
+| `README.md` / `README.zh-Hans.md` | 安装说明里的仓库地址 |
 | `DEPLOY.md`（本文件） | 命令示例 |
 
 `hacs.json` **不含** URL，无需改。
