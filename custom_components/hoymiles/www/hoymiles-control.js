@@ -66,7 +66,7 @@ function _hmControlRegister() {
   /* Power on/off is slow: the firmware has to bring the PCS (and the packs)
      down or up again, so the card shows the requested state as pending until
      the device reports it (or gives up after this long). */
-  const SWITCH_PENDING_MS = 30000;
+  const SWITCH_PENDING_MS = 5000;
   const SWITCH_CONFIRM_MS = 2500; // how long the tick after confirmation stays
 
   function slug(id) {
@@ -503,6 +503,7 @@ function _hmControlRegister() {
     _setSwitch(on) {
       const target = on ? "on" : "off";
       if (this._switchTarget() === target) return; // already on the way there
+      this._optimistic.switch = target;
       this._switchPending = { target, at: this._now() };
       this._switchConfirmedAt = 0;
       // Wake up once the wait is over, so the UI falls back to the real state
@@ -534,6 +535,22 @@ function _hmControlRegister() {
     }
 
     /**
+     * True when the entity cannot confirm its own state.
+     *
+     * The firmware's discovery switch is patched into an optimistic entity
+     * (`assumed_state`, no `state_topic`), because its original state topic is a
+     * nested JSON blob that never equals ON/OFF. HA then only remembers the last
+     * command *it* sent - it never learns what the device actually did. Waiting
+     * for a confirmation would always time out, and falling back to HA's value
+     * after the timeout would snap the button back to the previous state, which
+     * reads as "the command failed".
+     */
+    _switchOptimistic() {
+      const state = this._state("mqtt_switch", "switch") || this._state("config", "switch");
+      return Boolean(state && state.attributes && state.attributes.assumed_state);
+    }
+
+    /**
      * Drop the pending marker once the device agrees (or the wait expires).
      *
      * Called from the `hass` setter, i.e. on every push, which is what makes the
@@ -546,6 +563,9 @@ function _hmControlRegister() {
         this._switchPending = null;
         return;
       }
+      // An optimistic entity cannot confirm anything, so only the timeout ends
+      // the pending state (the requested value then simply stays in force).
+      if (this._switchOptimistic()) return;
       const real = this._switchReal();
       if (real !== null && real === (pending.target === "on")) {
         this._switchPending = null;
@@ -567,7 +587,18 @@ function _hmControlRegister() {
       const target = this._switchTarget();
       if (target) return { on: target === "on", pending: target, confirmed: false };
       const real = this._switchReal();
-      const on = real === null ? this._optimistic.switch === "on" : real;
+      /* A command issued from this card is authoritative for an optimistic
+         entity: HA only remembers the commands it sent itself, so waiting for
+         (or falling back to) that value would snap the button back. Before any
+         such command the entity's value is still the best thing we have, and for
+         a real entity the device always wins. */
+      const mine = this._optimistic.switch;
+      const commanded = mine === "on" || mine === "off";
+      const on = this._switchOptimistic() && commanded
+        ? mine === "on"
+        : real !== null
+          ? real
+          : mine === "on";
       const justConfirmed = this._switchConfirmedAt > 0
         && this._now() - this._switchConfirmedAt < SWITCH_CONFIRM_MS;
       if (!justConfirmed) this._switchConfirmedAt = 0;
