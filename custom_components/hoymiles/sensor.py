@@ -10,7 +10,6 @@ firmware already registers them through MQTT discovery.
 
 from __future__ import annotations
 
-
 from dataclasses import dataclass
 from typing import Any, Callable, Final
 
