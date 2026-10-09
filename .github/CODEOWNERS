@@ -24,9 +24,13 @@
 #    of them" is not required.
 
 # Everything in the repository needs an approval from the maintainers.
-# @ls199303 is the second collaborator (invited 2026-10-09). Delete it here if
-# you ever want *only* the repository owner to be able to approve.
-*                           @hoymiles-ha   @ls199303
+# ALL THREE must keep "Write" access, otherwise GitHub drops them from the list
+# and their approval stops counting. Remove a name here to revoke that person's
+# ability to unblock a pull request (they may still be a collaborator).
+#   @hoymiles-ha  repository owner (admin)
+#   @ls199303     maintainer      (write)
+#   @AidenZL      maintainer      (write)
+*                           @hoymiles-ha   @ls199303   @AidenZL
 
 # Hardening: the file that defines who may approve must be protected too,
 # otherwise a new collaborator could widen their own approval rights.
