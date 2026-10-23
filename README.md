@@ -71,13 +71,18 @@ that mirror the layout of the Hoymiles app.
 
 ### Option A — HACS (recommended)
 
-1. **HACS → Integrations → ⋮ (top right) → Custom repositories**
-2. Repository: `https://github.com/hoymiles-ha/ha` — Category: **Integration**
-3. Search for **Hoymiles Official** and click **Download**
-4. **Restart Home Assistant Core completely** (not just "Reload config entry")
+1. Open **HACS → Integrations**
+2. Search for **Hoymiles Official** and click **Download**
+3. **Restart Home Assistant Core completely** (not just "Reload config entry")
 
 > Why a full restart: the newly downloaded Python modules have to be re-imported.
 > Reloading the config entry alone will not load new code.
+
+> If the search does not find it yet (HACS caches the catalog and only refreshes
+> every 48 hours), add it once as a custom repository:
+> **HACS → Integrations → ⋮ (top right) → Custom repositories**,
+> repository `https://github.com/hoymiles-ha/ha`, category **Integration**, then
+> search for **Hoymiles Official** and click **Download**.
 
 ### Option B — Manual
 

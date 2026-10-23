@@ -150,77 +150,6 @@ function _hmPowerFlowRegister() {
   const PEARL_FADE_MIN_LEN = 70; // below this the fade would hide the pearl
   const PEARL_SECOND_MIN_LEN = 110; // above this a connector carries two
 
-  /* ------------------------------------------------------------------ *
-   * Build marker and stale-module self refresh.
-   *
-   * The integration injects this file as `.../hoymiles-power-flow.js?v=<mtime>`
-   * where the version is computed once when Home Assistant starts.  Replacing
-   * the file therefore does NOT change the URL, and a page that already
-   * imported the module keeps running the old copy until it is reloaded - which
-   * is easy to mistake for "my change had no effect".
-   *
-   * So every build carries a marker, and while the page is visible the module
-   * asks the server for its own file now and then: if the served copy has a
-   * different marker, this page runs an outdated build and reloads itself.  The
-   * probe has to repeat (a one-off check at load time would always find the
-   * module current); a session counter and a request guard keep a broken
-   * deployment from looping.  Set `auto_reload: false` on the card to opt out.
-   *
-   * NOTE FOR WHOEVER EDITS THIS FILE: bump `BUILD` in the same change.  The
-   * probe compares markers, so a new body under an old marker is invisible to
-   * it and the page keeps the stale copy - exactly the problem it exists to
-   * solve.
-   * ------------------------------------------------------------------ */
-  const BUILD = "2026-10-14e no-direction-marks+faster-pearls+build-probe+no-auto-reload";
-  const BUILD_URL = "/hoymiles_static/hoymiles-power-flow.js";
-  const BUILD_POLL_MS = 60000;
-  const BUILD_RELOAD_LIMIT = 2; // reloads per browser session
-  const BUILD_STORAGE_KEY = "hm-pf-reloads";
-  let buildProbeBusy = false;
-  let buildWatchOn = true;
-
-  function probeBuild() {
-    if (!buildWatchOn || buildProbeBusy) return;
-    if (typeof fetch !== "function" || typeof sessionStorage === "undefined") return;
-    let done = 0;
-    try { done = Number(sessionStorage.getItem(BUILD_STORAGE_KEY) || 0); } catch (err) { return; }
-    if (done >= BUILD_RELOAD_LIMIT) return;
-
-    buildProbeBusy = true;
-    // ``no-store`` so the probe itself can never come from the cache.
-    fetch(`${BUILD_URL}?probe=${Date.now()}`, { cache: "no-store" })
-      .then((res) => (res.ok ? res.text() : ""))
-      .then((text) => {
-        buildProbeBusy = false;
-        if (!text || text.indexOf(`"${BUILD}"`) >= 0) return;
-        try { sessionStorage.setItem(BUILD_STORAGE_KEY, String(done + 1)); } catch (err) { return; }
-        console.info("[hoymiles-power-flow] newer build on the server, reloading");
-        window.location.reload();
-      })
-      .catch(() => { buildProbeBusy = false; }); /* offline / blocked: keep the loaded copy */
-  }
-
-  function startBuildWatch() {
-    if (typeof fetch !== "function") return;
-    if (typeof document !== "undefined" && document.addEventListener) {
-      /* Coming back to an inactive tab is the moment a stale page is noticed. */
-      document.addEventListener("visibilitychange", () => {
-        if (!document.hidden) probeBuild();
-      });
-    }
-    /* A page served from the browser cache is stale before it is even drawn, so
-       check once shortly after load too; the delay keeps the probe away from the
-       first render. */
-    if (typeof setTimeout === "function") {
-      setTimeout(probeBuild, 3000);
-    }
-    if (typeof setInterval === "function") {
-      setInterval(() => {
-        if (typeof document === "undefined" || !document.hidden) probeBuild();
-      }, BUILD_POLL_MS);
-    }
-  }
-
   const COLORS = {
     pv: "#f5a623",
     pv6: "#f5a623",
@@ -820,7 +749,6 @@ function _hmPowerFlowRegister() {
       this._hass = null;
       this._config = null;
       this._cache = new Map();
-      this._build = BUILD; // which build this page is running
       /* Pearl animation state.  It lives on the card rather than in the markup
          because the diagram is rebuilt roughly once a second; see
          `_advancePearls`.  Deliberately not cleared by `setConfig`, so editing
@@ -838,14 +766,6 @@ function _hmPowerFlowRegister() {
 
     static getStubConfig() {
       return { dev_id: "" };
-    }
-
-    /**
-     * Ask the server whether this page runs an outdated build; see `probeBuild`.
-     * Useful from the console when a card behaves like an older version.
-     */
-    static checkBuild() {
-      probeBuild();
     }
 
     static get styles() {
@@ -902,8 +822,6 @@ function _hmPowerFlowRegister() {
       }
       this._config = { ...config };
       this._cache.clear();
-      /* The watch is module wide, so any card on the page can turn it off. */
-      buildWatchOn = this._config.auto_reload !== false;
     }
 
     set hass(hass) {
@@ -1645,9 +1563,6 @@ function _hmPowerFlowRegister() {
       preview: false,
     });
   }
-
-  /* A page may have imported an older copy of this file; see `probeBuild`. */
-  startBuildWatch();
 }
 
 if (customElements.get("ha-panel-lovelace")) {

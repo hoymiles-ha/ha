@@ -84,14 +84,12 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     if domain_data.get("_frontend_registered"):
         return
 
+    # Reading ``www/`` (existence checks and mtimes) is blocking IO, so it runs
+    # in an executor thread instead of on the event loop.
     www_dir = Path(__file__).parent / "www"
-    assets: list[tuple[str, str, int]] = []
-    for filename in FRONTEND_ASSETS:
-        asset_path = www_dir / filename
-        if not asset_path.is_file():
-            _LOGGER.warning("Bundled frontend asset %s is missing, skipping", asset_path)
-            continue
-        assets.append((f"{FRONTEND_URL}/{filename}", str(asset_path), _asset_version(asset_path)))
+    assets: list[tuple[str, str, int]] = await hass.async_add_executor_job(
+        _collect_assets, www_dir
+    )
 
     if not assets:
         _LOGGER.warning("No frontend assets found in %s, skipping frontend setup", www_dir)
@@ -158,6 +156,24 @@ def _register_asset_routes(http: Any, assets: list[tuple[str, str, int]]) -> boo
 
         router.add_get(url, _serve)
     return True
+
+
+def _collect_assets(www_dir: Path) -> list[tuple[str, str, int]]:
+    """Return ``(url, path, version)`` for every bundled asset that exists.
+
+    Touches the file system, so it must be called through
+    ``hass.async_add_executor_job`` rather than from the event loop.
+    """
+    assets: list[tuple[str, str, int]] = []
+    for filename in FRONTEND_ASSETS:
+        asset_path = www_dir / filename
+        if not asset_path.is_file():
+            _LOGGER.warning("Bundled frontend asset %s is missing, skipping", asset_path)
+            continue
+        assets.append(
+            (f"{FRONTEND_URL}/{filename}", str(asset_path), _asset_version(asset_path))
+        )
+    return assets
 
 
 def _asset_version(path: Path) -> int:

@@ -64,13 +64,17 @@
 
 ### 方式 A：HACS（推荐）
 
-1. **HACS → 集成 → 右上角 ⋮ → 自定义存储库**
-2. 仓库地址填 `https://github.com/hoymiles-ha/ha`，类别选 **Integration**
-3. 搜索 **Hoymiles Official** → **下载**
-4. **完整重启 Home Assistant Core**（不是「重载配置项」）
+1. 打开 **HACS → 集成**
+2. 搜索 **Hoymiles Official** → **下载**
+3. **完整重启 Home Assistant Core**（不是「重载配置项」）
 
 > 为什么必须完整重启：新下载的 Python 模块需要重新 import，
 > 只 reload config entry 不会加载新代码。
+
+> 如果暂时搜不到（HACS 会缓存目录，最长 48 小时才刷新），先按自定义存储库
+> 添加一次：**HACS → 集成 → 右上角 ⋮ → 自定义存储库**，
+> 仓库地址填 `https://github.com/hoymiles-ha/ha`，类别选 **Integration**，
+> 然后搜索 **Hoymiles Official** → **下载**。
 
 ### 方式 B：手动安装
 
