@@ -10,7 +10,7 @@
  * Card config:
  *   type: custom:hoymiles-pack-list
  *   dev_id: MSA-280520260806
- *   language: en               # optional (en|zh); omit to follow Home Assistant
+ *   language: en               # optional (en|zh|de); omit to follow Home Assistant
  *   title: Battery packs
  *   columns: 2                 # optional, lay the rows out in N columns
  *   show_temperature: false    # optional; hide the ℃ reading (SOC only)
@@ -24,18 +24,97 @@ function _hmPackListRegister() {
   /* ------------------------------------------------------------------ *
    * Language
    *
-   * An explicit `language:` in the card config wins. When it is absent the
-   * card follows the Home Assistant user's language (`hass.language`), so a
-   * dashboard matches the UI without per-card configuration. Any Chinese
-   * variant counts as Chinese - Home Assistant reports `zh-Hans` / `zh-Hant`
-   * and may carry a region suffix such as `zh-Hans-CN`.
+   * Three languages: English, Simplified Chinese and German.
+   *
+   * Resolution order, first hit wins:
+   *   1. `language:` on the card - an explicit choice, and what an older
+   *      dashboard may already carry;
+   *   2. the Home Assistant user's language, so the cards follow the UI like
+   *      every built-in one does;
+   *   3. English.
+   *
+   * `zh-Hans` / `zh-Hant` / `zh-CN` all collapse to `zh`: the wording is the
+   * same in either script, and the card has no Traditional translation to
+   * offer.  `de-AT` / `de-CH` collapse to `de` for the same reason.
    * ------------------------------------------------------------------ */
-  function hmLang(hass, config) {
-    const wanted = config && config.language;
-    if (wanted) return String(wanted).toLowerCase().startsWith("zh") ? "zh" : "en";
-    const ui = hass && hass.language;
-    return ui && String(ui).toLowerCase().startsWith("zh") ? "zh" : "en";
+  /* German wording, keyed by the English string.
+
+     Keyed by English on purpose: the call sites pass English and Chinese
+     only, so they needed no third argument when German was added, and a
+     missing entry falls back to English instead of leaving a blank. */
+  const T_DE = {
+    "Battery": "Batterie",
+    "Battery packs": "Batteriepakete",
+    "No pack data": "Keine Paketdaten",
+  };
+
+  /** Map any Home Assistant language tag to one of the three card languages. */
+  function hmNormalise(value) {
+    const raw = String(value == null ? "" : value).toLowerCase();
+    if (raw.startsWith("zh")) return "zh";
+    if (raw.startsWith("de")) return "de";
+    if (raw.startsWith("en")) return "en";
+    return "";
   }
+
+  /* ------------------------------------------------------------------ *
+   * The language the user picked
+   *
+   * The choice belongs to the viewer, not to the dashboard: it lives in one
+   * localStorage key and is announced with one window event, so the dropdown
+   * on any card switches every card on the page at once, and the choice
+   * survives a reload.
+   *
+   * English is the default.  It deliberately does NOT follow the Home
+   * Assistant UI language any more: a dashboard is often shared, and the point
+   * of the dropdown is that the reader decides.
+   * ------------------------------------------------------------------ */
+  const LANG_KEY = "hoymiles.language";
+  const LANG_EVENT = "hoymiles-language";
+  const LANG_CHOICES = [["en", "English"], ["zh", "\u4e2d\u6587"], ["de", "Deutsch"]];
+
+  /** The stored choice, or "" when nothing has been picked (or no storage). */
+  function hmStored() {
+    try {
+      return hmNormalise(window.localStorage.getItem(LANG_KEY));
+    } catch (err) {
+      return ""; // private mode / storage disabled: fall back to the default
+    }
+  }
+
+  /** Remember a choice and tell every card about it. */
+  function hmSetLang(value) {
+    const lang = hmNormalise(value) || "en";
+    try {
+      window.localStorage.setItem(LANG_KEY, lang);
+    } catch (err) {
+      /* nothing to remember it with; the event still switches this page */
+    }
+    window.dispatchEvent(new CustomEvent(LANG_EVENT, { detail: lang }));
+  }
+
+  function hmLang(hass, config) {
+    return hmStored() || hmNormalise(config && config.language) || "en";
+  }
+
+  /**
+   * One of the three wordings.
+   *
+   * German comes from the card's own dictionary, keyed by the English string -
+   * that is why `_t()` call sites did not have to change when the third
+   * language was added.  A missing entry falls back to English, so an
+   * untranslated string shows English rather than nothing.
+   */
+  function hmPick(lang, en, zh) {
+    if (lang === "zh") return zh;
+    if (lang === "de") {
+      const de = T_DE[en];
+      return de == null ? en : de;
+    }
+    return en;
+  }
+
+  /* (hmLang defined above, with the dictionary.) */
 
   /* ------------------------------------------------------------------ *
    * Localised config strings
@@ -47,8 +126,8 @@ function _hmPackListRegister() {
    *     en: Battery packs
    *     zh: 电池包
    *
-   * That is what lets the text *you* write follow the UI language too, instead
-   * of pinning a dashboard to one language. A map missing the current language
+   * That is what lets the text *you* write follow the language the reader
+   * picked, instead of pinning a dashboard to one language. A map missing the current language
    * falls back to `en`, then to whichever entry exists.
    * ------------------------------------------------------------------ */
   function hmText(value, lang) {
@@ -156,8 +235,23 @@ function _hmPackListRegister() {
 
     /* ----------------------------- lookups ----------------------------- */
 
+    /**
+     * Language changes are announced on `window`; re-rendering is all a card
+     * has to do, because the wording is chosen while it renders.
+     */
+    connectedCallback() {
+      super.connectedCallback();
+      this._onLangChange = () => this.requestUpdate();
+      window.addEventListener(LANG_EVENT, this._onLangChange);
+    }
+
+    disconnectedCallback() {
+      window.removeEventListener(LANG_EVENT, this._onLangChange);
+      super.disconnectedCallback();
+    }
+
     _t(en, zh) {
-      return hmLang(this._hass, this._config) === "zh" ? zh : en;
+      return hmPick(hmLang(this._hass, this._config), en, zh);
     }
 
     /** Resolve one user-supplied string (plain string or language map). */
@@ -325,8 +419,6 @@ function _hmPackListRegister() {
             @change=${this._changed("title")}></ha-textfield>
           <ha-textfield label="columns" .value=${config.columns || "1"}
             @change=${this._changed("columns")}></ha-textfield>
-          <ha-textfield label="language (auto|en|zh, auto follows Home Assistant)"
-            .value=${config.language || ""} @change=${this._changed("language")}></ha-textfield>
           <label class="sw">
             <ha-switch .checked=${config.show_temperature !== false}
               @change=${this._toggle("show_temperature")}></ha-switch>
