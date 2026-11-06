@@ -11,6 +11,7 @@ firmware already registers them through MQTT discovery.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Callable, Final
 
 from homeassistant.components.sensor import (
@@ -22,6 +23,8 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
     EntityCategory,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
@@ -33,7 +36,9 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
@@ -232,6 +237,17 @@ class HoymilesSensorDescription(SensorEntityDescription):
 
     value_fn: Callable[[dict[str, Any]], Any] | None = None
     attrs_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    # Hold the last known value across a restart, see HoymilesSensor.
+    restore: bool = False
+
+
+# ``device/state`` and ``system/state`` are only pushed every five minutes, and
+# ``system/state`` is the only source for the daily energy counters.  Right after
+# a Home Assistant restart those entities therefore sit at ``unknown`` for up to
+# five minutes, which the dashboard renders as "—".  Restoring the last value
+# bridges exactly that gap.  It is deliberately short: the counters start over
+# at midnight, so resurrecting yesterday's total would be worse than "—".
+RESTORE_MAX_AGE: Final = timedelta(hours=1)
 
 
 _POWER = {
@@ -243,6 +259,7 @@ _ENERGY = {
     "device_class": SensorDeviceClass.ENERGY,
     "native_unit_of_measurement": UnitOfEnergy.WATT_HOUR,
     "state_class": SensorStateClass.TOTAL_INCREASING,
+    "restore": True,
 }
 _VOLTAGE = {
     "device_class": SensorDeviceClass.VOLTAGE,
@@ -433,8 +450,19 @@ SENSOR_DESCRIPTIONS: tuple[HoymilesSensorDescription, ...] = (
     ),
     # ---------------- device/state : packs ----------------
     HoymilesSensorDescription(
-        key="pack_count", name="Pack Count", value_fn=d("pack_num"),
+        key="pack_count",
+        name="Pack Count",
+        value_fn=d("pack_num"),
         entity_category=EntityCategory.DIAGNOSTIC,
+        # The pack count describes the *hardware*, not a measurement: it does
+        # not change minute to minute.  Without the restore a restart (or a
+        # device that is briefly silent) turned it ``unknown``, and the
+        # dashboard then had to guess how many modules to draw - the battery
+        # illustration showed one module while the history chart still drew the
+        # four packs the unit really has.  ``device/state`` is only pushed every
+        # five minutes, so this is the same "bridge the gap" case the energy
+        # counters already use.
+        restore=True,
     ),
     HoymilesSensorDescription(
         key="pack1_soc", name="Pack 1 SOC", value_fn=pack(0, "soc"), **_SOC
@@ -525,7 +553,7 @@ async def async_setup_entry(
     )
 
 
-class HoymilesSensor(CoordinatorEntity[HoymilesCoordinator], SensorEntity):
+class HoymilesSensor(CoordinatorEntity[HoymilesCoordinator], RestoreEntity, SensorEntity):
     """A push-updated sensor fed by the MQTT coordinator."""
 
     _attr_has_entity_name = True
@@ -546,6 +574,27 @@ class HoymilesSensor(CoordinatorEntity[HoymilesCoordinator], SensorEntity):
             name=dev_id,
             manufacturer=MANUFACTURER,
         )
+        # Filled in by async_added_to_hass; None means "nothing to fall back to".
+        self._restored_value: Any = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the last value so a restart does not blank a slow sensor."""
+        await super().async_added_to_hass()
+
+        if not self.entity_description.restore:
+            return
+
+        last = await self.async_get_last_state()
+        if last is None or last.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+            return
+
+        if dt_util.utcnow() - last.last_updated > RESTORE_MAX_AGE:
+            return
+
+        try:
+            self._restored_value = float(last.state)
+        except (TypeError, ValueError):
+            self._restored_value = None
 
     @property
     def available(self) -> bool:
@@ -554,11 +603,14 @@ class HoymilesSensor(CoordinatorEntity[HoymilesCoordinator], SensorEntity):
 
     @property
     def native_value(self) -> Any:
-        """Return the current value."""
+        """Return the live value, falling back to the restored one."""
         value_fn = self.entity_description.value_fn
         if value_fn is None:
             return None
-        return value_fn(self.coordinator.data or {})
+        value = value_fn(self.coordinator.data or {})
+        if value is None:
+            return self._restored_value
+        return value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
