@@ -5,8 +5,8 @@
  *
  * Draws the system as a **wiring diagram**, the way the vendor app does on its
  * system screen: one ringed icon per branch, the inverter in a rounded square
- * in the middle, and thick rounded connectors with moving pearls that show the
- * direction of the power.
+ * in the middle, and thick rounded connectors with a light pulse running along
+ * them that shows the direction of the power.
  *
  *   ⬜ PV1 ──┐                  ┌── ⬜ PV2
  *           ├── ▣ inverter ─── ● ── ⬜ grid
@@ -41,11 +41,11 @@
  *   dev_id: MSA-280520260806      # required
  *   title: My home                # optional, defaults to the device id
  *   show_title: true              # optional, false hides the title + device id
- *   language: en                  # optional (en|zh); omit to follow Home Assistant
+ *   language: en                  # optional (en|zh|de); omit to follow Home Assistant
  *   temperature_entity: sensor.x  # optional, shown next to the title
  *   gradient: true                # optional white backdrop (default true)
  *   max_width: 620                # optional px, the drawing stays centered
- *   flow_speed: 1                 # optional multiplier for the moving pearls;
+ *   flow_speed: 1                 # optional multiplier for the flow pulse;
  *                                 # 0.5 = half speed (calmer), 2 = faster
  *   entities:                     # optional entity id overrides, keyed by the
  *                                 # suffix the card looks up
@@ -59,6 +59,7 @@
  *     battery_status: sensor.my_battery_status
  *     rssi: sensor.my_rssi
  *   show_rssi: true               # optional, hide the fan with false
+ *   grid_mode: auto               # auto | meter | no_meter, see below
  * ========================================================================== */
 
 function _hmPowerFlowRegister() {
@@ -69,18 +70,114 @@ function _hmPowerFlowRegister() {
   /* ------------------------------------------------------------------ *
    * Language
    *
-   * An explicit `language:` in the card config wins. When it is absent the
-   * card follows the Home Assistant user's language (`hass.language`), so a
-   * dashboard matches the UI without per-card configuration. Any Chinese
-   * variant counts as Chinese - Home Assistant reports `zh-Hans` / `zh-Hant`
-   * and may carry a region suffix such as `zh-Hans-CN`.
+   * Three languages: English, Simplified Chinese and German.
+   *
+   * Resolution order, first hit wins:
+   *   1. `language:` on the card - an explicit choice, and what an older
+   *      dashboard may already carry;
+   *   2. the Home Assistant user's language, so the cards follow the UI like
+   *      every built-in one does;
+   *   3. English.
+   *
+   * `zh-Hans` / `zh-Hant` / `zh-CN` all collapse to `zh`: the wording is the
+   * same in either script, and the card has no Traditional translation to
+   * offer.  `de-AT` / `de-CH` collapse to `de` for the same reason.
    * ------------------------------------------------------------------ */
-  function hmLang(hass, config) {
-    const wanted = config && config.language;
-    if (wanted) return String(wanted).toLowerCase().startsWith("zh") ? "zh" : "en";
-    const ui = hass && hass.language;
-    return ui && String(ui).toLowerCase().startsWith("zh") ? "zh" : "en";
+  /* German wording, keyed by the English string.
+
+     Keyed by English on purpose: the call sites pass English and Chinese
+     only, so they needed no third argument when German was added, and a
+     missing entry falls back to English instead of leaving a blank. */
+  const T_DE = {
+    "My home": "Mein Zuhause",
+    "excellent": "sehr gut",
+    "good": "gut",
+    "fair": "mäßig",
+    "weak": "schwach",
+    "Wi-Fi signal": "WLAN-Signal",
+    "Solar1": "Solar1",
+    "Solar2": "Solar2",
+    "Storage": "Speicher",
+    "Charging": "Laden",
+    "Discharging": "Entladen",
+    "Standby": "Bereitschaft",
+    "Smart plug": "Smarte Steckdose",
+    "Idle": "Leerlauf",
+    "Grid in": "Netzbezug",
+    "Grid out": "Netzeinspeisung",
+    "Grid": "Netz",
+    "Grid & load": "Netz & Last",
+    "Other loads": "Sonstige Lasten",
+    "Load": "Last",
+  };
+
+  /** Map any Home Assistant language tag to one of the three card languages. */
+  function hmNormalise(value) {
+    const raw = String(value == null ? "" : value).toLowerCase();
+    if (raw.startsWith("zh")) return "zh";
+    if (raw.startsWith("de")) return "de";
+    if (raw.startsWith("en")) return "en";
+    return "";
   }
+
+  /* ------------------------------------------------------------------ *
+   * The language the user picked
+   *
+   * The choice belongs to the viewer, not to the dashboard: it lives in one
+   * localStorage key and is announced with one window event, so the dropdown
+   * on any card switches every card on the page at once, and the choice
+   * survives a reload.
+   *
+   * English is the default.  It deliberately does NOT follow the Home
+   * Assistant UI language any more: a dashboard is often shared, and the point
+   * of the dropdown is that the reader decides.
+   * ------------------------------------------------------------------ */
+  const LANG_KEY = "hoymiles.language";
+  const LANG_EVENT = "hoymiles-language";
+  const LANG_CHOICES = [["en", "English"], ["zh", "\u4e2d\u6587"], ["de", "Deutsch"]];
+
+  /** The stored choice, or "" when nothing has been picked (or no storage). */
+  function hmStored() {
+    try {
+      return hmNormalise(window.localStorage.getItem(LANG_KEY));
+    } catch (err) {
+      return ""; // private mode / storage disabled: fall back to the default
+    }
+  }
+
+  /** Remember a choice and tell every card about it. */
+  function hmSetLang(value) {
+    const lang = hmNormalise(value) || "en";
+    try {
+      window.localStorage.setItem(LANG_KEY, lang);
+    } catch (err) {
+      /* nothing to remember it with; the event still switches this page */
+    }
+    window.dispatchEvent(new CustomEvent(LANG_EVENT, { detail: lang }));
+  }
+
+  function hmLang(hass, config) {
+    return hmStored() || hmNormalise(config && config.language) || "en";
+  }
+
+  /**
+   * One of the three wordings.
+   *
+   * German comes from the card's own dictionary, keyed by the English string -
+   * that is why `_t()` call sites did not have to change when the third
+   * language was added.  A missing entry falls back to English, so an
+   * untranslated string shows English rather than nothing.
+   */
+  function hmPick(lang, en, zh) {
+    if (lang === "zh") return zh;
+    if (lang === "de") {
+      const de = T_DE[en];
+      return de == null ? en : de;
+    }
+    return en;
+  }
+
+  /* (hmLang defined above, with the dictionary.) */
 
   /* ------------------------------------------------------------------ *
    * Localised config strings
@@ -92,8 +189,8 @@ function _hmPowerFlowRegister() {
    *     en: History
    *     zh: 历史数据
    *
-   * That is what lets the text *you* write follow the UI language too, instead
-   * of pinning a dashboard to one language. A map missing the current language
+   * That is what lets the text *you* write follow the language the reader
+   * picked, instead of pinning a dashboard to one language. A map missing the current language
    * falls back to `en`, then to whichever entry exists.
    * ------------------------------------------------------------------ */
   function hmText(value, lang) {
@@ -119,36 +216,84 @@ function _hmPowerFlowRegister() {
   const VB_W = 700;
   const VB_H = 470;
   const MIN_FLOW = 5; // W; below this a branch is drawn as idle
+  /* How far the load has to read *below* zero before `grid_mode: auto`
+     accepts it as proof that there is no meter.  A metered system keeps the
+     load at or above zero, so this only has to clear rounding and sensor
+     noise rather than any real reading. */
+  const METER_PROOF_W = 30; // W
 
-  /* Speed of the moving pearls. The travel time is derived from the connector
-     length, so a short stub and a long line no longer look like different
-     animals.
+  /* How fast the streak travels along a connector, in SVG units per second.
+     The travel time is derived from the connector length, so a short stub and a
+     long line no longer look like different animals.
 
-     Tuned three times: the first values (40..230 px/s) crossed the 233 unit PV
-     connector in 1.0 s and looked frantic, so they were more than halved; the
-     user then found that a little too calm and asked for a step up, and then
-     for one more, which is where these sit - the same connector now crosses in
-     about 1.6 s. Use the card's `flow_speed` option to nudge the whole thing
-     (1 = default). */
-  const DOT_SPEED_MIN = 28; // px per second at ~0 W
-  const DOT_SPEED_MAX = 150; // px per second at full power
-  const DOT_SPEED_PER_W = 0.17; // px/s gained per watt, saturates near 720 W
-  const DOT_DUR_MIN = 1.0; // s, keeps the very short stubs readable
-  const DOT_DUR_MAX = 6.0; // s
-  /* The readings arrive once a second and their last digit jumps about, so the
-     pearls low pass the power over this long; without it the dots stutter in
-     step with the pushes instead of gliding. */
-  const DOT_SMOOTH_TAU = 1.2; // s
+     Use the card's `flow_speed` option to nudge the whole thing (1 = default). */
+  const FLOW_SPEED_MIN = 55; // units per second at ~0 W
+  const FLOW_SPEED_MAX = 230; // units per second at full power
+  const FLOW_SPEED_PER_W = 0.25; // units/s gained per watt, saturates near 700 W
+  const FLOW_DUR_MIN = 0.9; // s, keeps the very short stubs readable
+  const FLOW_DUR_MAX = 4.5; // s
 
-  /* A rounded corner is flattened into this many straight segments when a
-     pearl is placed on it - fine enough that the flattening is invisible. */
-  const PEARL_QUAD_STEPS = 12;
-  /* Where a pearl fades in / out along its lap, as a fraction of the connector. */
-  const PEARL_FADE_IN = 0.12;
-  const PEARL_FADE_OUT = 0.15;
-  const PEARL_OPACITY = 0.95;
-  const PEARL_FADE_MIN_LEN = 70; // below this the fade would hide the pearl
-  const PEARL_SECOND_MIN_LEN = 110; // above this a connector carries two
+  /* ------------------------------------------------------------------ *
+   * The streak
+   *
+   * A connector that carries power gets **one** streak of light travelling from
+   * one end of it to the other, like a signal being sent down the wire.  The
+   * connector itself is not recoloured - it keeps the plain grey of
+   * `.pf-edge`; only the streak is lit.
+   *
+   * The streak is a **single dash**, not a repeating pattern: the dash is
+   * `STREAK` units long and the gap after it is several times the connector, so
+   * only one can be on the line at a time.  A repeating pattern put two or three
+   * of them on a long connector, which reads as decoration rather than as
+   * something being sent.
+   *
+   * It is drawn as a run of **slices**, each a short dash with its own colour
+   * and opacity, and that is what makes the fade.  The first slice is white and
+   * opaque, the last is the branch colour at almost nothing, and the slices in
+   * between are interpolated: a smooth comet instead of a bar.  The earlier
+   * version stacked four strokes of different length on top of each other, which
+   * is why the tail came out as visible steps and the widest stroke read as an
+   * empty frame around the bright part - a gradient cannot be made out of a
+   * handful of nested outlines.
+   *
+   * A real `<linearGradient>` was the other option and is wrong here: a gradient
+   * is painted in a straight line, so on an L shaped connector the colour would
+   * run diagonally across the pipe instead of along it.
+   *
+   * Slice `i` sits `i * slice` further back than the head, so
+   * `dashoffset = length - head` becomes `offset_i = offset_head + i * slice`,
+   * and every slice is animated by the same keyframes - the run moves as one
+   * piece.
+   *
+   * The motion is a plain CSS animation of `stroke-dashoffset`, with the three
+   * end points handed to the keyframes as CSS variables because they depend on
+   * the connector's length.  That also fixes the freeze: the old dots were moved
+   * by a requestAnimationFrame loop, and a card that had been detached and
+   * re-attached (switching dashboard tabs does) is not re-rendered, so nothing
+   * ever restarted the loop.  A CSS animation simply keeps running.
+   *
+   * The same negative `animation-delay` mechanism puts a rebuilt path back where
+   * it was, so a re-render (about once a second, as the readings change) does
+   * not restart the streak at the beginning.
+   */
+  const STREAK_SHARE = 0.34; // streak length, as a fraction of the connector
+  const STREAK_MIN = 34; // units; below this a short stub barely reads
+  const STREAK_MAX = 120; // units; a long connector must not carry a bar
+  /* How many slices a streak is cut into.  More slices, smoother fade - and a
+     bigger DOM (14 paths per lit connector).  At card size one slice is about
+     2 px wide, so the steps are already invisible; going higher only costs. */
+  const STREAK_SLICES = 14;
+  /* Share of the cycle spent travelling.  The rest is the pause after the
+     streak has left, and it **must match the keyframe percentages** below. */
+  const STREAK_TRAVEL = 0.72;
+  /* Width at the head and at the tail, in user units.  The grey pipe is 6.8, so
+     the streak sits just inside it. */
+  const STREAK_WIDTH = 6;
+  const STREAK_TIP = 3.6;
+
+  /* A rounded corner is flattened into this many straight segments - fine
+     enough that the flattening is invisible at the card's size. */
+  const CURVE_STEPS = 12;
 
   /* ------------------------------------------------------------------ *
    * Build marker and stale-module self refresh.
@@ -171,7 +316,7 @@ function _hmPowerFlowRegister() {
    * it and the page keeps the stale copy - exactly the problem it exists to
    * solve.
    * ------------------------------------------------------------------ */
-  const BUILD = "2026-10-14e no-direction-marks+faster-pearls+build-probe+no-auto-reload";
+  const BUILD = "2026-11-06a gradient-streak";
   const BUILD_URL = "/hoymiles_static/hoymiles-power-flow.js";
   const BUILD_POLL_MS = 60000;
   const BUILD_RELOAD_LIMIT = 2; // reloads per browser session
@@ -399,13 +544,46 @@ function _hmPowerFlowRegister() {
    * and feet on the ground. On top of that the cells are tinted green up to
    * the state of charge, so the picture doubles as a gauge.
    * ------------------------------------------------------------------ */
-  const STACK_X = 272; // left edge of the front face
-  const STACK_W = 40; // front face width
-  const STACK_SIDE = 7; // right hand connector panel
-  const STACK_BOTTOM = 350; // ground line the stack stands on
-  const STACK_HEAD_H = 13; // dark BMS / PCS module
-  const STACK_MOD_H = 19; // one battery module
+  /* The stack now stands in front of the house on the scene's ground line, so
+     it is a little larger than the schematic version was. */
+  const STACK_X = 252; // left edge of the front face
+  const STACK_W = 54; // front face width
+  const STACK_SIDE = 9; // right hand connector panel
+  const STACK_BOTTOM = 392; // ground line the stack stands on
+  const STACK_HEAD_H = 18; // dark BMS / PCS module
+  const STACK_MOD_H = 26; // one battery module
   const STACK_MAX_PACKS = 4; // matches the battery card and the firmware
+
+  /* ------------------------------------------------------------------ *
+   * Geometry of the house scene (the system view).
+   *
+   * The drawing, the furniture and every pipe read their anchors from here,
+   * so a pipe can never end a few units away from the thing it connects to -
+   * that mismatch is what makes a hand drawn scene look broken.  All of it is
+   * fixed: nothing in here depends on a reading.
+   * ------------------------------------------------------------------ */
+  const HX = {
+    ground: 392, // the line the whole house stands on
+    wingL: 88, wingR: 258, // low wing on the left (flat roof, PV1)
+    wingRoofY: 296, wingEaveY: 310,
+    wallL: 310, wallR: 604, // main block
+    eave: 196, ridgeX: 458, ridgeY: 90,
+    busX: 545, // vertical run inside the house every branch meets
+    busTop: 232, // where the PV2 spur takes over
+    busBottom: 370, // where the pack's horizontal run joins
+    meterX: 654, meterY: 316, // meter box / on-grid port on the right wall
+    /* The branches.  Written from the source towards the house, so a pipe's
+       own direction is what `reverse` flips when the power runs the other
+       way.  Straight segments only - the round line joins do the corners. */
+    routes: {
+      pv1: "M160 310 V344 H252", // PV1 roof down, then right into the pack
+      bat: "M306 370 H545", // pack, across the ground floor, to the bus
+      bus: "M545 370 V232", // the bus, from the pack up to the upper floor
+      pv2: "M545 232 V184", // PV2 spur, down into the bus
+      grid: "M545 320 H628", // bus out through the wall to the meter
+      plug: "M545 332 H506", // bus to the smart socket
+    },
+  };
 
   /**
    * `soc` is the state of charge in percent (0..100) or null when the reading
@@ -487,7 +665,7 @@ function _hmPowerFlowRegister() {
    * pattern used here before swallowed the control point of
    * `Q104 200 114 200` into the argument list of the preceding `V`, which
    * turned the real path "M104 142 V190 Q104 200 114 200 H283" into a seven
-   * point zigzag.  The pearls on every charging battery and on PV1 therefore
+   * point zigzag.  The flow on every charging battery and on PV1 therefore
    * jumped up and down the left connector - the direction looked broken
    * because the path itself was.
    */
@@ -524,10 +702,10 @@ function _hmPowerFlowRegister() {
   /**
    * Flatten one of our connectors into a polyline with cumulative lengths.
    *
-   * The card places the pearls itself, so it needs a point at an arbitrary
-   * distance along a connector.  Doing that in plain JavaScript (rather than
-   * `getPointAtLength` on every frame) keeps the animation off the layout
-   * engine and - just as useful - keeps it testable outside a browser.
+   * Only the total length is needed now - the pulse is a dash pattern, so the
+   * browser works out where along the path it sits - but the polyline is what
+   * gives that length without calling `getPointAtLength` on a live element, and
+   * it keeps the arithmetic testable outside a browser.
    */
   function pathPolyline(d) {
     const pts = parsePath(d);
@@ -548,8 +726,8 @@ function _hmPowerFlowRegister() {
          interpolating between the samples cannot be seen. */
       let px = a.x;
       let py = a.y;
-      for (let k = 1; k <= PEARL_QUAD_STEPS; k += 1) {
-        const t = k / PEARL_QUAD_STEPS;
+      for (let k = 1; k <= CURVE_STEPS; k += 1) {
+        const t = k / CURVE_STEPS;
         const u = 1 - t;
         const x = u * u * a.x + 2 * u * t * b.q.x + t * t * b.x;
         const y = u * u * a.y + 2 * u * t * b.q.y + t * t * b.y;
@@ -581,62 +759,26 @@ function _hmPowerFlowRegister() {
     return line.length ? line[line.length - 1].s : 0;
   }
 
-  /** Point at `dist` along the polyline, walking it from the start. */
-  function pointAt(line, dist) {
-    const total = polylineLength(line);
-    if (!(total > 0)) return line[0] || { x: 0, y: 0 };
-
-    let want = dist % total;
-    if (want < 0) want += total;
-
-    let lo = 0;
-    let hi = line.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (line[mid].s <= want) lo = mid;
-      else hi = mid - 1;
-    }
-    const a = line[lo];
-    const b = line[Math.min(lo + 1, line.length - 1)];
-    const span = b.s - a.s;
-    const t = span > 0 ? (want - a.s) / span : 0;
-    return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-  }
-
   /** Length of one of our connectors, in SVG user units. */
   function pathLength(d) {
     return polylineLength(polyline(d));
   }
 
   /**
-   * How fast a pearl travels, in SVG units per second.
+   * How fast a pulse travels, in SVG units per second.
    *
    * The power sets the speed, but the *travel time* is kept between
-   * `DOT_DUR_MIN` and `DOT_DUR_MAX`: an 18 px stub would otherwise flick past
-   * in a flash, and a long connector at low power would crawl.
+   * `FLOW_DUR_MIN` and `FLOW_DUR_MAX`: an 18 unit stub would otherwise flick
+   * past in a flash, and a long connector at low power would crawl.
    */
-  function pearlSpeed(power, len, speedScale = 1) {
+  function flowSpeed(power, len, speedScale = 1) {
     const scale = speedScale > 0 ? speedScale : 1;
     const raw = clamp(
-      DOT_SPEED_MIN + Math.abs(num(power)) * DOT_SPEED_PER_W,
-      DOT_SPEED_MIN, DOT_SPEED_MAX,
+      FLOW_SPEED_MIN + Math.abs(num(power)) * FLOW_SPEED_PER_W,
+      FLOW_SPEED_MIN, FLOW_SPEED_MAX,
     ) * scale;
     if (!(len > 0)) return raw;
-    return clamp(raw, len / DOT_DUR_MAX, len / DOT_DUR_MIN);
-  }
-
-  /**
-   * Opacity of a pearl along its lap: it fades in over the first
-   * `PEARL_FADE_IN` of the connector and out over the last `PEARL_FADE_OUT`, so
-   * it never pops into or out of existence at the ends.  A short stub skips the
-   * fade - it would spend most of the lap invisible.
-   */
-  function pearlOpacity(phase, fade) {
-    if (!fade) return PEARL_OPACITY;
-    const p = phase - Math.floor(phase);
-    if (p < PEARL_FADE_IN) return PEARL_OPACITY * (p / PEARL_FADE_IN);
-    if (p > 1 - PEARL_FADE_OUT) return PEARL_OPACITY * ((1 - p) / PEARL_FADE_OUT);
-    return PEARL_OPACITY;
+    return clamp(raw, len / FLOW_DUR_MAX, len / FLOW_DUR_MIN);
   }
 
   /**
@@ -646,7 +788,7 @@ function _hmPowerFlowRegister() {
    *
    * Both traps worth remembering: a segment that changes in *both* x and y
    * must stay an `L` (emitting `H` collapsed the two diagonals into a
-   * horizontal line, so their pearls flew off the drawing), and a rounded
+   * horizontal line, so their flow flew off the drawing), and a rounded
    * corner keeps its control point when it is walked backwards.
    *
    * Done here instead of with SMIL `keyPoints` because keyPoints support is
@@ -672,59 +814,80 @@ function _hmPowerFlowRegister() {
     return out;
   }
 
+  /* The reversed copy of each connector, built once: `reversePath` parses the
+     path and rebuilds a string, and every render asks for it again. */
+  const REVERSED_CACHE = new Map();
+
+  function travelPath(route) {
+    if (!route.reverse) return route.d;
+    const key = String(route.d);
+    let back = REVERSED_CACHE.get(key);
+    if (back === undefined) {
+      back = reversePath(key);
+      REVERSED_CACHE.set(key, back);
+    }
+    return back;
+  }
+
   /**
-   * Markup for the pearls of one connector, placed at `phase` (0..1 of the
-   * connector; a second pearl rides half a lap behind).
+   * Markup for the streak of one connector.
    *
-   * There is deliberately no SMIL here.  The old version used
-   * `<animateMotion begin="0s">`, which looks like the obvious tool, but a
-   * rebuilt animation element is positioned at
+   * `plan` carries the geometry and the timing already worked out by
+   * `_beamPlan`, so this only has to turn them into a run of slices.
    *
-   *     (document time / dur) mod 1
+   * Each slice gets its three keyframe stops as custom properties:
    *
-   * and this diagram is rebuilt about once a second, because the powers keep
-   * changing.  With the document time in the thousands of seconds, a 0.01 s
-   * change in `dur` - which is what 197 W -> 198 W produces - shifts that by a
-   * tenth of the connector.  Measured on the live card, a dot teleported up to
-   * 100 px in a single frame: it flickered instead of flowing.  Placing the
-   * pearls by hand puts the phase on the card, so a rebuild picks the dot up
-   * exactly where it was and a change of speed only changes how fast it
-   * travels.  See `_advancePearls`.
+   *   --hm-from  the whole streak still outside the start of the connector
+   *   --hm-to    the head has just reached the far end
+   *   --hm-park  the whole streak is past the far end, i.e. it has left
    *
-   *  * travel speed follows the connector length and the power, so equal power
-   *    moves at an equal speed everywhere;
-   *  * `reverse` sends the flow the other way (charging into the battery,
-   *    importing from the grid) without moving the drawing;
-   *  * each pearl fades in and out at the ends instead of popping into place;
-   *  * longer connectors carry two pearls, half a lap apart, which reads as one
-   *    continuous flow instead of a lone dot every few seconds.
+   * A slice's own offset is the head's offset plus `i * slice`, which places it
+   * `i * slice` further back along the dash pattern.  All of them run on one
+   * animation, so the run stays rigid while it travels.
+   *
+   * The gradient lives in `colour` / `opacity` / `width`: white and opaque at
+   * the head, the branch colour and nearly nothing at the tail.  `linecap` is
+   * `butt` for the body - a round cap would bulge out of the pipe and make each
+   * slice visible as a bead - and `round` for the head, so the streak starts in
+   * a small dome instead of a cut edge.
    */
-  function flowPearls(route, phase) {
-    const power = Math.abs(num(route.power));
-    if (power < MIN_FLOW) return "";
-
-    const travel = route.reverse ? reversePath(route.d) : route.d;
-    const len = pathLength(travel);
-    if (!(len > 0)) return "";
-
-    const count = len > PEARL_SECOND_MIN_LEN ? 2 : 1;
-    const fade = len > PEARL_FADE_MIN_LEN;
+  function flowBeam(plan) {
+    const { route, travel, len, duration, phase } = plan;
+    const streak = clamp(len * STREAK_SHARE, STREAK_MIN, Math.min(STREAK_MAX, len));
+    const slice = streak / STREAK_SLICES;
+    /* The gap is well over the connector, so the pattern cannot repeat on it:
+       exactly one streak is ever on the wire, however long the line is. */
+    const gap = 2 * len + slice;
+    /* A negative delay is the part of the cycle that has already run, which is
+       how a rebuilt path resumes at the distance it had reached. */
+    const delay = (-phase * duration).toFixed(2);
 
     let out = "";
-    for (let i = 0; i < count; i += 1) {
-      const p = phase + i / count;
-      const at = pointAt(polyline(travel), p * len);
+    for (let i = 0; i < STREAK_SLICES; i += 1) {
+      /* 0 at the head, 1 at the tail. */
+      const t = i / (STREAK_SLICES - 1);
+      const shift = i * slice;
+      const from = slice + shift;
+      const to = slice - len + shift;
+      const park = slice - len - streak + shift;
+      const width = (STREAK_WIDTH - (STREAK_WIDTH - STREAK_TIP) * t).toFixed(2);
+      /* Nearly gone by the tail, but not quite: a slice that reaches zero
+         disappears in a step of its own, which is exactly the banding this is
+         meant to avoid. */
+      const opacity = (1 - 0.94 * t).toFixed(3);
+      const colour = mixHex("#ffffff", route.color, Math.min(1, t * 1.7));
+
       out += `
-      <g class="pf-pearl" data-pf="${route.id}:${i}"
-         data-pf-path="${esc(travel)}" data-pf-power="${power.toFixed(1)}"
-         data-pf-fade="${fade ? 1 : 0}"
-         transform="translate(${at.x.toFixed(2)} ${at.y.toFixed(2)})"
-         opacity="${pearlOpacity(p, fade).toFixed(3)}">
-        <circle class="pf-glow" r="6.8" fill="${route.color}"/>
-        <circle class="pf-dot" r="3.2" fill="${route.color}"/>
-      </g>`;
+        <path d="${esc(travel)}" fill="none" stroke="${colour}"
+              stroke-width="${width}" stroke-opacity="${opacity}"
+              stroke-linecap="${i === 0 ? "round" : "butt"}"
+              stroke-dasharray="${slice.toFixed(2)} ${gap.toFixed(2)}"
+              style="--hm-from:${from.toFixed(2)}px;--hm-to:${to.toFixed(2)}px;`
+        + `--hm-park:${park.toFixed(2)}px;`
+        + `animation-duration:${duration.toFixed(2)}s;animation-delay:${delay}s"/>`;
     }
-    return out;
+
+    return `<g class="pf-beam" data-pf-beam="${route.id}">${out}</g>`;
   }
 
   /* ------------------------------------------------------------------ *
@@ -792,6 +955,33 @@ function _hmPowerFlowRegister() {
     return Math.min(Math.max(value, min), max);
   }
 
+  /** "#rrggbb" (or "#rgb") -> [r, g, b], 0..255. */
+  function hexRgb(hex) {
+    const raw = String(hex).replace("#", "");
+    const full = raw.length === 3
+      ? raw.split("").map((ch) => ch + ch).join("")
+      : raw;
+    const value = parseInt(full, 16);
+    if (!Number.isFinite(value)) return [0, 0, 0];
+    return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+  }
+
+  /**
+   * Blend two colours, `t` = 0 gives `from` and `t` = 1 gives `to`.
+   *
+   * Used to walk the streak from white at its head to the branch colour at its
+   * tail.  Interpolating in sRGB is not colour correct, but the two ends are
+   * close enough in lightness that the difference is invisible here - and it
+   * needs no colour space machinery.
+   */
+  function mixHex(from, to, t) {
+    const a = hexRgb(from);
+    const b = hexRgb(to);
+    const k = clamp(t, 0, 1);
+    const parts = a.map((v, i) => Math.round(v + (b[i] - v) * k));
+    return `rgb(${parts[0]},${parts[1]},${parts[2]})`;
+  }
+
   /**
    * Signal strength tiers, shared with the battery card so both cards draw the
    * same icon for the same reading. Returns the number of lit bars (0..4).
@@ -821,15 +1011,15 @@ function _hmPowerFlowRegister() {
       this._config = null;
       this._cache = new Map();
       this._build = BUILD; // which build this page is running
-      /* Pearl animation state.  It lives on the card rather than in the markup
-         because the diagram is rebuilt roughly once a second; see
-         `_advancePearls`.  Deliberately not cleared by `setConfig`, so editing
-         an unrelated option does not restart every dot. */
-      this._pfPhase = new Map(); // route id -> 0..1 along its connector
-      this._pfPower = new Map(); // route id -> low passed |P|
-      this._pfPearls = []; // live nodes + geometry, refreshed per render
-      this._pfRaf = 0;
-      this._pfLast = 0;
+      /* Streak phase, one entry per connector, 0..1 of its cycle.  It is advanced
+         once per render (see `_beamPlan`) and the CSS animation carries the
+         streak the rest of the way.  Deliberately not cleared by `setConfig`, so
+         editing an unrelated option does not restart every streak. */
+      this._pfPhase = new Map(); // route id -> 0..1 of one trip
+      this._pfClock = 0; // ms of the last phase advance
+      /* `grid_mode: auto` latches here once a negative load proves that
+         `sys_grid_p` is not a meter reading; see `_hasMeter`. */
+      this._sawNegativeLoad = false;
     }
 
     static getConfigElement() {
@@ -881,16 +1071,57 @@ function _hmPowerFlowRegister() {
            the middle, which the app draws a little larger. */
         .pf-ic { display: block; }
 
-        /* A pearl's opacity is written every frame (see pearlOpacity), so it
-           must NOT be declared here: a stylesheet rule beats the presentation
-           attribute, and the fade in / out would never be seen. */
-        .pf-glow { opacity: 0.2; }
-        .pf-dot { stroke: #fff; stroke-width: 1.15; }
+        /* --- the streak ----------------------------------------------------
+           The connector keeps its own grey colour; what travels along it is one
+           streak of light, cut into slices that fade out.
+
+           The three stops are CSS variables because they depend on the length of
+           the connector, which the keyframes cannot know.  A custom property in
+           a keyframe is substituted per element, so this is the only way to give
+           every path its own travel distance while all of them share one
+           animation.  The 72% stop has to stay in step with STREAK_TRAVEL.
+
+           stroke-linecap is deliberately NOT declared here.  A rule with the
+           same specificity as the presentation attribute wins, and this one used
+           to say round - which turned every slice into a capsule wider than the
+           gap between slices, so the fade came out as a row of visible beads.
+           The cap now belongs to each path (butt for the body, round at the
+           head), and a stylesheet rule would silently undo that again.
+
+           stroke-dashoffset is written with px on purpose: user units and px are
+           the same inside an SVG here, and a bare number is only valid in a
+           presentation attribute, not in a CSS declaration. */
+        .pf-beam path {
+          fill: none;
+          stroke-linejoin: round;
+          animation-name: hm-flow-run;
+          animation-timing-function: linear;
+          animation-iteration-count: infinite;
+        }
+        @keyframes hm-flow-run {
+          0% { stroke-dashoffset: var(--hm-from, 100px); }
+          72% { stroke-dashoffset: var(--hm-to, 0px); }
+          100% { stroke-dashoffset: var(--hm-park, -100px); }
+        }
 
         .pf-v { font-size: 19px; font-weight: 600;
                 fill: #1f2933; letter-spacing: 0.2px; }
         .pf-soc { font-size: 15px; font-weight: 500; opacity: 0.9; }
         .pf-c { font-size: 13px; fill: #8b95a5; }
+
+        /* --- the house scene (system view) -------------------------------
+           A pipe is two strokes: a soft outline and a white core.  One flat
+           colour would vanish either on the warm interior or against the sky,
+           and the pipes have to be read over both. */
+        .pf-pipe { fill: none; stroke: rgba(139, 160, 182, 0.34);
+                   stroke-width: 13.5; stroke-linecap: round;
+                   stroke-linejoin: round; }
+        .pf-pipe-core { fill: none; stroke: #ffffff; stroke-width: 10;
+                        stroke-linecap: round; stroke-linejoin: round; }
+        .pf-kw { font-size: 19px; font-weight: 700; fill: #1f2933;
+                 letter-spacing: 0.2px; font-variant-numeric: tabular-nums; }
+        .pf-kc { font-size: 12px; fill: #8b95a5; }
+        .pf-lead { fill: none; stroke: #c3ced9; stroke-width: 1; }
         .note { font-size: 12px; color: var(--secondary-text-color);
                 text-align: center; padding: 4px 0 8px; }
       `;
@@ -935,6 +1166,9 @@ function _hmPowerFlowRegister() {
         this._config.gradient, this._config.max_width,
         this._text(this._config.title), this._config.show_title, this._config.show_rssi,
         this._config.flow_speed,
+        /* `auto` latches on a negative load, so the resolved layout - not just
+           the setting - is part of what the drawing depends on. */
+        this._config.grid_mode, this._sawNegativeLoad,
         this._temperature(),
         /* Readings are compared at the precision the card prints them with.
            They wiggle in their last digit every second, and rebuilding the
@@ -949,141 +1183,92 @@ function _hmPowerFlowRegister() {
       ].join("\u0001");
     }
 
-    /** Multiplier for the pearl speed (`flow_speed`, 1 = default). */
+    /** Multiplier for the streak speed (`flow_speed`, 1 = default). */
     _flowSpeed() {
       const scale = num(this._config && this._config.flow_speed);
       return scale > 0 ? scale : 1;
     }
 
-    /* --------------------------- the pearls --------------------------- */
-
-    /** Phase of a route's flow: 0..1 along its connector. */
-    _phaseOf(id) {
-      const known = this._pfPhase.get(id);
-      const p = Number.isFinite(known) ? known : 0;
-      return p - Math.floor(p);
-    }
+    /* --------------------------- the streak --------------------------- */
 
     /**
-     * Cache the pearl groups together with the geometry a frame needs, so the
-     * animation never has to query the DOM or re-parse a path.
+     * Work out where every streak is, and how long one trip takes.
      *
-     * Called after every render: Lit replaces the whole `<svg>` on each update,
-     * so the nodes from the previous render are dead.
+     * One entry per lit connector: the geometry (so the caller does not parse the
+     * path twice), the duration of one cycle and the phase, 0..1.  A route that
+     * carries too little power is left out, and so is a degenerate path.
+     *
+     * The phase is the only state, and it is advanced here rather than by the
+     * browser because the CSS animation is restarted by every re-render - it just
+     * gets the phase back through a negative `animation-delay`.  Advancing by
+     * `dt / duration` keeps the position continuous when the speed changes: a
+     * faster trip covers the same fraction of the connector in less time.
+     *
+     * The step is clamped because a hidden tab stops painting, and the minutes
+     * it was away must not be added as one huge jump.
      */
-    _collectPearls() {
-      const root = this.renderRoot;
-      const found = root ? root.querySelectorAll("g.pf-pearl") : [];
-      const nodes = [];
-      found.forEach((el) => {
-        const key = el.getAttribute("data-pf") || "";
-        const line = polyline(el.getAttribute("data-pf-path") || "");
-        const len = polylineLength(line);
-        if (!(len > 0)) return;
-        nodes.push({
-          el,
-          id: key.split(":")[0],
-          /* The second pearl of a connector rides half a lap behind the first. */
-          offset: key.endsWith(":1") ? 0.5 : 0,
-          line,
-          len,
-          fade: el.getAttribute("data-pf-fade") === "1",
-          /* What the flow *should* be at; the speed chases it (see below). */
-          target: Math.abs(num(el.getAttribute("data-pf-power"))),
-        });
-      });
-      this._pfPearls = nodes;
-    }
+    _beamPlan(routes) {
+      const now = (typeof performance !== "undefined"
+        && typeof performance.now === "function")
+        ? performance.now()
+        : Date.now();
+      const last = this._pfClock || now;
+      this._pfClock = now;
+      const dt = Math.min(Math.max((now - last) / 1000, 0), 5);
 
-    /**
-     * Move every pearl one frame forward.
-     *
-     * The phase advances in *normalised* units - a fraction of the connector -
-     * and not in seconds or pixels.  That is the whole trick: changing the speed
-     * then only changes how fast the dot travels, never where it is, so the next
-     * re-render (about once a second) draws it exactly where it had got to, and
-     * a power jump cannot teleport it.
-     */
-    _advancePearls(dt) {
       const scale = this._flowSpeed();
-      /* The two pearls of a connector share one phase and differ only by an
-         offset, so the phase is advanced once per route and the offset is
-         applied on the way out.  Writing the offset back into `_pfPhase` would
-         advance the route twice per frame and shift it by half a lap. */
-      const phases = new Map();
+      const plan = [];
 
-      for (const pearl of this._pfPearls) {
-        if (!phases.has(pearl.id)) {
-          const previous = this._pfPower.has(pearl.id)
-            ? this._pfPower.get(pearl.id)
-            : pearl.target;
-          /* `quick/state` pushes once a second and its last digit jitters; low
-             passing the power is what turns that into a steady glide. */
-          const power = previous + (pearl.target - previous)
-            * (1 - Math.exp(-dt / DOT_SMOOTH_TAU));
-          this._pfPower.set(pearl.id, power);
+      for (const route of routes) {
+        const power = Math.abs(num(route.power));
+        if (power < MIN_FLOW) continue;
+        const travel = travelPath(route);
+        const len = pathLength(travel);
+        if (!(len > 0)) continue;
 
-          const speed = pearlSpeed(power, pearl.len, scale);
-          const raw = this._phaseOf(pearl.id) + (speed * dt) / pearl.len;
-          const phase = raw - Math.floor(raw);
-          this._pfPhase.set(pearl.id, phase);
-          phases.set(pearl.id, phase);
-        }
+        /* `flowSpeed` is the speed *while travelling*; the cycle also contains
+           the pause after the streak has left, so one trip takes longer than
+           `len / speed`. */
+        const speed = flowSpeed(power, len, scale);
+        const duration = clamp(len / (speed * STREAK_TRAVEL), 0.8, 12);
 
-        const phase = phases.get(pearl.id) + pearl.offset;
-        const at = pointAt(pearl.line, (phase - Math.floor(phase)) * pearl.len);
-        pearl.el.setAttribute("transform",
-          `translate(${at.x.toFixed(2)} ${at.y.toFixed(2)})`);
-        pearl.el.setAttribute("opacity", pearlOpacity(phase, pearl.fade).toFixed(3));
+        const known = this._pfPhase.get(route.id);
+        const phase = dt > 0 && Number.isFinite(known)
+          ? (known + dt / duration) % 1
+          : (Number.isFinite(known) ? known : 0);
+        this._pfPhase.set(route.id, phase);
+
+        plan.push({ route, travel, len, duration, phase });
       }
+      return plan;
     }
 
     /**
-     * Start the loop that drives the pearls.  A no-op when one is already
-     * running, so it is safe to call after every render.
+     * Language changes are announced on `window`; re-rendering is all a card
+     * has to do, because the wording is chosen while it renders.
      */
-    _startPearls() {
-      if (this._pfRaf || !this._pfPearls.length) return;
-      if (typeof requestAnimationFrame !== "function") return;
-      const now = typeof performance !== "undefined"
-        ? () => performance.now()
-        : () => Date.now();
-      this._pfLast = now();
-      const tick = (stamp) => {
-        this._pfRaf = requestAnimationFrame(tick);
-        /* Clamped: a hidden tab stops firing rAF, and the time it was away must
-           not be dumped into the phase as one huge step. */
-        const dt = Math.min(Math.max((stamp - this._pfLast) / 1000, 0), 0.1);
-        this._pfLast = stamp;
-        this._advancePearls(dt);
-      };
-      this._pfRaf = requestAnimationFrame(tick);
-    }
-
-    _stopPearls() {
-      if (this._pfRaf && typeof cancelAnimationFrame === "function") {
-        cancelAnimationFrame(this._pfRaf);
-      }
-      this._pfRaf = 0;
-    }
-
-    /** Pick up the freshly rendered pearls, then keep them moving. */
-    updated() {
-      this._collectPearls();
-      if (this._pfPearls.length) this._startPearls();
-      else this._stopPearls();
+    connectedCallback() {
+      super.connectedCallback();
+      /* The pulse is a CSS animation, so it keeps running across a detach and
+         re-attach by itself - switching dashboard tabs used to freeze it, which
+         is why the old dot animation needed a requestAnimationFrame loop that
+         had to be restarted by hand.  Only the clock is forgotten, otherwise the
+         first render after coming back would add the whole time away. */
+      this._pfClock = 0;
+      this._onLangChange = () => this.requestUpdate();
+      window.addEventListener(LANG_EVENT, this._onLangChange);
     }
 
     disconnectedCallback() {
+      window.removeEventListener(LANG_EVENT, this._onLangChange);
       super.disconnectedCallback();
-      this._stopPearls();
-      this._pfPearls = [];
+      this._pfClock = 0;
     }
 
     /* ----------------------------- lookup ----------------------------- */
 
     _t(en, zh) {
-      return hmLang(this._hass, this._config) === "zh" ? zh : en;
+      return hmPick(hmLang(this._hass, this._config), en, zh);
     }
 
     /** Resolve one user-supplied string (plain string or language map). */
@@ -1321,19 +1506,55 @@ function _hmPowerFlowRegister() {
 
     /* --------------------------- the diagram --------------------------- */
 
-    _svg(d) {
-      const present = (v) => v !== null && v !== undefined && !Number.isNaN(num(v));
+    /**
+     * Is there a grid meter in this system?
+     *
+     * The protocol carries no such flag.  `sys_grid_p` *is* the meter reading,
+     * so it is 0 both when no meter is installed and when a metered system is
+     * holding a perfect zero exchange - the two are indistinguishable on the
+     * wire.  `sys_load_p` is worse than useless as a hint: it is computed as
+     * `grid + plug + pv2 - sp`, so with no meter it collapses to the on-grid
+     * port power and goes *negative* whenever the unit charges from the house.
+     *
+     * Hence `grid_mode`:
+     *   meter     - the two nodes are drawn separately (the old behaviour)
+     *   no_meter  - grid and load are one node, fed by / feeding the house
+     *   auto      - starts as `meter` and switches over the first time the
+     *               load reads negative.  A house load can only consume, so a
+     *               negative figure is proof that `sys_grid_p` is not a
+     *               measurement.  The verdict is latched: a meter does not
+     *               disappear, and flipping the layout back and forth between
+     *               samples would be worse than either answer.
+     */
+    _hasMeter(d) {
+      const mode = String((this._config || {}).grid_mode || "auto").toLowerCase();
+      if (mode === "meter") return true;
+      if (mode === "no_meter" || mode === "nometer") return false;
+      if (num(d.load) < -METER_PROOF_W) this._sawNegativeLoad = true;
+      return !this._sawNegativeLoad;
+    }
 
-      /* The wiring diagram: PV1 / storage run into the inverter's left side, the
+    _svg(d) {
+      return this._schematic(d);
+    }
+
+    /* The ring-and-connector schematic, which is what `_svg` draws.  The house
+       scene below is no longer reachable (the user asked for the wiring
+       diagram back) but is kept, so switching between the two is one line. */
+    _schematic(d) {
+      const present = (v) => v !== null && v !== undefined && !Number.isNaN(num(v));
+      const hasMeter = this._hasMeter(d);
+
+       /* The wiring diagram: PV1 / storage run into the inverter's left side, the
          inverter's right side meets a junction on the right edge, and the
          remaining branches fan out from that junction.  Each branch is one
-         path, so the moving pearls can simply run along it. */
+         path, so the light pulse can simply run along it. */
       /* Direction of every connector, decided in one place.
        *
        * A route is always *written* from its own node towards the inverter /
        * junction, so `reverse: true` means "the power runs from the far end
        * back into this branch's node".  Getting this the wrong way round is
-       * very visible: the pearls then travel against the energy flow.
+       * very visible: the pulse then travels against the energy flow.
        *
        *   pv, pv2      producing            node     -> junction
        *   battery      discharging (>= 0)   node     -> inverter
@@ -1352,15 +1573,25 @@ function _hmPowerFlowRegister() {
           color: COLORS.battery, reverse: charging },
         { id: "trunk", d: `M361 ${JUNCTION.y} H594`, power: trunk,
           color: COLORS.pv, reverse: trunk < 0 },
-        { id: "grid", d: `M600 142 V${JUNCTION.y - 6}`, power: d.grid,
-          color: num(d.grid) > 0 ? COLORS.grid : COLORS.grid_out,
-          reverse: num(d.grid) < 0 },
+        {
+          /* With a meter this branch is the meter's reading.  Without one there
+             is nothing to measure except the on-grid port, which *is* the house
+             connection - so the same branch carries the house instead, and the
+             node below is captioned "Grid & load". */
+          id: "grid",
+          d: `M600 142 V${JUNCTION.y - 6}`,
+          power: hasMeter ? d.grid : d.load,
+          color: (hasMeter ? num(d.grid) >= 0 : num(d.load) >= 0)
+            ? COLORS.grid
+            : COLORS.grid_out,
+          reverse: hasMeter ? num(d.grid) < 0 : num(d.load) >= 0,
+        },
       ];
       if (present(d.pv2)) {
         routes.push({ id: "pv2", d: PV2_ROUTE, power: d.pv2,
           color: COLORS.pv6, reverse: num(d.pv2) < 0 });
       }
-      if (present(d.load)) {
+      if (present(d.load) && hasMeter) {
         routes.push({ id: "load", d: LAMP_ROUTE, power: d.load,
           color: COLORS.load, reverse: num(d.load) >= 0 });
       }
@@ -1373,7 +1604,7 @@ function _hmPowerFlowRegister() {
         <path class="pf-edge" d="${r.d}" fill="none"
               vector-effect="non-scaling-stroke"/>`).join("");
 
-      const dots = routes.map((r) => flowPearls(r, this._phaseOf(r.id))).join("");
+      const beams = this._beamPlan(routes).map(flowBeam).join("");
 
       /* One icon per node and the unit in the middle.  A branch whose entity is
          absent is dropped (and its connector with it); a branch that exists but
@@ -1381,8 +1612,9 @@ function _hmPowerFlowRegister() {
       const nodes = this._nodes(d, {
         pv2: present(d.pv2),
         plug: present(d.smartPlug),
-        lamp: present(d.load),
-        grid: present(d.grid),
+        lamp: present(d.load) && hasMeter,
+        grid: present(d.grid) && hasMeter,
+        merged: present(d.load) && !hasMeter,
       });
 
       /* The unit in the middle works as soon as *anything* flows through it, so
@@ -1399,11 +1631,375 @@ function _hmPowerFlowRegister() {
           <circle cx="0" cy="0" r="${NODE_CLIP_R}"/>
         </clipPath>
         ${edges}
-        ${dots}
+        ${beams}
         ${this._inverter(busy)}
         <circle class="pf-junction" cx="${JUNCTION.x}" cy="${JUNCTION.y}" r="6"/>
         ${nodes}
       </svg>`;
+    }
+
+    /* ------------------------ the house scene ------------------------ */
+
+    /**
+     * The system view as the vendor app draws it: a cut-away little house with
+     * PV1 on the flat roof of the low wing, PV2 on the pitched roof, the pack
+     * standing in front of it, the meter on the right hand wall and the lamp,
+     * television and smart socket inside.  The pipes *are* the branches; the
+     * beam runs along them exactly as it does in the schematic.
+     *
+     * Why a second drawing at all: a house answers "where does my energy go"
+     * without having to learn what a ringed icon stands for, and it has room
+     * for the appliance level detail the schematic could not show.  The data
+     * plumbing and the beam are shared, so a number can never
+     * disagree between the two views.
+     *
+     * Topology - and the reason for the arithmetic below:
+     *
+     *   PV1 ---> pack ---> bus ---+---> smart socket
+     *                             +---> meter / on-grid port
+     *   PV2 ----------------------+     and up into the rooms
+     *
+     * Everything PV1 makes lands on the pack first; the pack passes on what it
+     * does not keep, plus its own discharge.  Written that way the pipes
+     * conserve on their own, without a second guess at how the firmware split
+     * the PV between charging and the house:
+     *
+     *   pack out = pv + bat        (bat < 0 while charging)
+     *
+     *   pv =    0, bat = -2145  ->  -2145   charging from the house
+     *   pv =    0, bat =   +95  ->    +95   discharging
+     *   pv =  500, bat =  -500  ->      0   everything into the pack
+     *   pv = 1000, bat =  -300  ->   +700   pack keeps 300, house gets 700
+     */
+    _houseScene(d) {
+      const present = (v) => v !== null && v !== undefined && !Number.isNaN(num(v));
+      const hasMeter = this._hasMeter(d);
+
+      const pv1 = Math.max(0, num(d.pv));
+      const fromPack = pv1 + num(d.battery);
+      const busLoad = pv1 + num(d.pv2) + num(d.battery);
+
+      const routes = [
+        { id: "pv1", d: HX.routes.pv1, power: pv1,
+          color: COLORS.pv, reverse: false },
+        { id: "bat", d: HX.routes.bat, power: fromPack,
+          color: COLORS.battery, reverse: fromPack < 0 },
+        { id: "bus", d: HX.routes.bus, power: busLoad,
+          color: COLORS.battery, reverse: busLoad < 0 },
+        { id: "pv2", d: HX.routes.pv2, power: num(d.pv2),
+          color: COLORS.pv6, reverse: num(d.pv2) > 0 },
+        {
+          /* With a meter this is the meter's own reading.  Without one there
+             is nothing to measure but the on-grid port, which *is* the house
+             connection - so the same pipe carries the house and the badge
+             says "Grid & load". */
+          id: "grid",
+          d: HX.routes.grid,
+          power: hasMeter ? d.grid : d.load,
+          color: (hasMeter ? num(d.grid) >= 0 : num(d.load) >= 0)
+            ? COLORS.grid
+            : COLORS.grid_out,
+          reverse: hasMeter ? num(d.grid) > 0 : num(d.load) >= 0,
+        },
+      ];
+      if (present(d.smartPlug)) {
+        routes.push({ id: "plug", d: HX.routes.plug, power: d.smartPlug,
+          color: COLORS.sp, reverse: num(d.smartPlug) < 0 });
+      }
+
+      /* Two strokes per pipe: a soft outline and a white core.  That is what
+         makes a pipe readable on the warm interior, on the blue sky and over
+         the dark roof alike - a single colour would vanish somewhere. */
+      const pipes = routes.map((r) => `
+        <path class="pf-pipe" d="${r.d}"/>
+        <path class="pf-pipe-core" d="${r.d}"/>`).join("");
+
+      const beams = this._beamPlan(routes).map(flowBeam).join("");
+
+      return `<svg viewBox="0 0 ${VB_W} ${VB_H}" preserveAspectRatio="xMidYMid meet"
+                   xmlns="http://www.w3.org/2000/svg" role="img">
+        ${this._hxDefs()}
+        ${this._config.gradient === false
+          ? `<rect x="0" y="0" width="${VB_W}" height="${VB_H}" fill="#ffffff"/>`
+          : this._hxBackdrop()}
+        ${this._hxBuilding()}
+        ${this._hxInterior()}
+        ${stackMarkup(d.soc, d.packs)}
+        ${this._hxMeter(hasMeter, d)}
+        ${pipes}
+        ${beams}
+        ${this._hxLabels(d, hasMeter, present)}
+      </svg>`;
+    }
+
+    /** Gradients, the port clip and the one shadow filter the scene uses. */
+    _hxDefs() {
+      return `
+        <defs>
+          <linearGradient id="hm-hx-sky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#dcecfa"/>
+            <stop offset="55%" stop-color="#f0f8fd"/>
+            <stop offset="100%" stop-color="#ffffff"/>
+          </linearGradient>
+          <linearGradient id="hm-hx-ground" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#e9f0f7"/>
+            <stop offset="100%" stop-color="#fafcfe"/>
+          </linearGradient>
+          <linearGradient id="hm-hx-roof" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#515b6b"/>
+            <stop offset="100%" stop-color="#333b47"/>
+          </linearGradient>
+          <linearGradient id="hm-hx-wall" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#ffffff"/>
+            <stop offset="70%" stop-color="#f4f7fa"/>
+            <stop offset="100%" stop-color="#e4ebf3"/>
+          </linearGradient>
+          <linearGradient id="hm-hx-warm" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#fff8ec"/>
+            <stop offset="100%" stop-color="#fdeede"/>
+          </linearGradient>
+          <linearGradient id="hm-hx-pv1" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#45c487"/>
+            <stop offset="100%" stop-color="#1f9b5f"/>
+          </linearGradient>
+          <linearGradient id="hm-hx-pv2" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#2d3e57"/>
+            <stop offset="100%" stop-color="#18222f"/>
+          </linearGradient>
+          <linearGradient id="hm-hx-lamp" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#ffeec4"/>
+            <stop offset="100%" stop-color="#ffd27a"/>
+          </linearGradient>
+          <radialGradient id="hm-hx-glow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#ffd27a" stop-opacity="0.55"/>
+            <stop offset="100%" stop-color="#ffd27a" stop-opacity="0"/>
+          </radialGradient>
+          <clipPath id="hm-hx-port" clipPathUnits="userSpaceOnUse">
+            <circle cx="0" cy="0" r="26"/>
+          </clipPath>
+        </defs>`;
+    }
+
+    /** Sky, the strip of ground the house stands on, and its contact shadow. */
+    _hxBackdrop() {
+      return `
+        <rect x="0" y="0" width="${VB_W}" height="${VB_H}" fill="url(#hm-hx-sky)"/>
+        <rect x="0" y="${HX.ground}" width="${VB_W}"
+              height="${VB_H - HX.ground}" fill="url(#hm-hx-ground)"/>
+        <ellipse cx="352" cy="${HX.ground + 2}" rx="300" ry="10"
+                 fill="#dbe6f1" opacity="0.5"/>`;
+    }
+
+    /**
+     * The two volumes: the low wing on the left (whose flat roof carries PV1)
+     * and the two storey block with the pitched roof that carries PV2.
+     *
+     * PV1's array is drawn as a slanted quad on the roof deck rather than as a
+     * rectangle, because the deck itself is in perspective - a rectangle on a
+     * slanted deck is the fastest way to make the picture read as a diagram
+     * again.
+     */
+    _hxBuilding() {
+      return `
+        <g class="pf-hx-building">
+          <!-- low wing: the PV1 deck is its roof, so the deck has to sit on a
+               volume - a floating panel reads as a table, not as a building -->
+          <polygon points="88,296 102,310 102,392 88,378" fill="#ccd6e1"/>
+          <rect x="102" y="310" width="142" height="82" fill="url(#hm-hx-wall)"/>
+          <rect x="102" y="310" width="142" height="22" fill="rgba(15,23,42,0.05)"/>
+          <polygon points="88,296 258,296 244,310 102,310"
+                   fill="url(#hm-hx-pv1)"/>
+          <g stroke="rgba(255,255,255,0.45)" stroke-width="1.1">
+            <line x1="130.5" y1="296" x2="137.5" y2="310"/>
+            <line x1="173" y1="296" x2="173" y2="310"/>
+            <line x1="215.5" y1="296" x2="208.5" y2="310"/>
+            <line x1="95" y1="303" x2="251" y2="303"/>
+          </g>
+          <polygon points="88,296 258,296 244,310 102,310"
+                   fill="none" stroke="rgba(15,23,42,0.18)"/>
+          <rect x="82" y="290" width="182" height="7" rx="3" fill="#c3cdd8"/>
+
+          <!-- main block: a shaded left face, the front, then the roof -->
+          <polygon points="298,196 310,206 310,392 298,382" fill="#cdd7e2"/>
+          <rect x="310" y="196" width="294" height="196" fill="url(#hm-hx-wall)"/>
+          <rect x="310" y="366" width="294" height="26" fill="rgba(15,23,42,0.045)"/>
+          <polygon points="298,196 458,90 618,196" fill="url(#hm-hx-roof)"/>
+          <polygon points="458,90 618,196 611,196 458,98" fill="rgba(255,255,255,0.07)"/>
+          <rect x="292" y="192" width="332" height="10" rx="4" fill="#4b5563"/>
+          <rect x="292" y="199" width="332" height="4" rx="2" fill="#333b47"/>
+
+          <!-- PV2 on the pitched roof -->
+          <polygon points="498,116.5 573.2,166.3 556.6,191.3 481.4,141.5"
+                   fill="url(#hm-hx-pv2)"/>
+          <g stroke="rgba(120,165,210,0.45)" stroke-width="1">
+            <line x1="523.1" y1="133.1" x2="506.5" y2="158.1"/>
+            <line x1="548.1" y1="149.7" x2="531.5" y2="174.7"/>
+            <line x1="489.7" y1="129" x2="564.9" y2="178.9"/>
+          </g>
+          <polygon points="498,116.5 573.2,166.3 556.6,191.3 481.4,141.5"
+                   fill="none" stroke="rgba(255,255,255,0.24)"/>
+        </g>`;
+    }
+
+    /**
+     * The inside of the house: two storeys of warm wall, a pendant lamp
+     * upstairs and the sofa, television and smart socket downstairs.  The
+     * furniture is what makes the cut-away read as a home rather than as an
+     * empty box, and the socket sits where its pipe can reach it.
+     */
+    _hxInterior() {
+      return `
+        <g class="pf-hx-interior">
+          <rect x="322" y="208" width="270" height="78" fill="url(#hm-hx-warm)"/>
+          <rect x="316" y="286" width="282" height="8" fill="#e2e9f0"/>
+          <rect x="322" y="294" width="270" height="96" fill="url(#hm-hx-warm)"/>
+
+          <!-- upper room: a pendant lamp -->
+          <circle cx="400" cy="244" r="26" fill="url(#hm-hx-glow)"/>
+          <polygon points="390,236 410,236 405,247 395,247" fill="url(#hm-hx-lamp)"/>
+          <rect x="398.6" y="247" width="2.8" height="14" fill="#d6c3a6"/>
+          <rect x="394" y="261" width="12" height="3" rx="1.5" fill="#c9b79a"/>
+
+          <!-- lower room: sofa, television, rug, smart socket -->
+          <ellipse cx="366" cy="384" rx="46" ry="6" fill="#f0e6d4" opacity="0.75"/>
+          <rect x="326" y="336" width="56" height="10" rx="4" fill="#ddcfb6"/>
+          <rect x="322" y="342" width="60" height="18" rx="5" fill="#d3c3a6"/>
+          <rect x="344" y="368" width="76" height="7" rx="3" fill="#e6dbc7"/>
+          <rect x="396" y="334" width="54" height="28" rx="3.5" fill="#2b323b"/>
+          <rect x="400" y="338" width="46" height="20" rx="2" fill="#46536a"/>
+
+          <g class="pf-hx-socket">
+            <rect x="484" y="330" width="22" height="22" rx="4.5"
+                  fill="#ffffff" stroke="#d3dbe4"/>
+            <circle cx="492" cy="341" r="1.6" fill="#b9c3cf"/>
+            <circle cx="498" cy="341" r="1.6" fill="#b9c3cf"/>
+          </g>
+        </g>`;
+    }
+
+    /**
+     * The right hand wall box: a meter while one is installed, the app's grid
+     * artwork when it is not.
+     *
+     * Without a meter the branch is the on-grid port - which is the house
+     * connection - so it keeps the grid slot and the grid artwork, as asked
+     * for when the merged node was introduced.  The badge underneath says
+     * "Grid & load" so the merge is visible without reading the code.
+     */
+    _hxMeter(hasMeter, d) {
+      const cx = HX.meterX;
+      const cy = HX.meterY;
+      if (!hasMeter) {
+        const busy = Math.abs(num(d.load)) >= MIN_FLOW;
+        const art = PF_ICONS[`grid.${busy ? "on" : "off"}`] || "";
+        return `<g class="pf-hx-port" transform="translate(${cx} ${cy})">
+            <circle cx="0" cy="0" r="27" fill="#ffffff"/>
+            <image x="-26" y="-26" width="52" height="52"
+                   clip-path="url(#hm-hx-port)" href="${art}"/>
+          </g>`;
+      }
+      return `<g class="pf-hx-meter">
+          <rect x="628" y="286" width="52" height="60" rx="8"
+                fill="#eef3f8" stroke="#cdd7e2" stroke-width="1.2"/>
+          <rect x="634" y="292" width="40" height="28" rx="4"
+                fill="#ffffff" stroke="#dde4ec"/>
+          <circle cx="${cx}" cy="306" r="9.5" fill="#f8fafc"
+                  stroke="#b7c3d1" stroke-width="1.1"/>
+          <line x1="${cx}" y1="306" x2="${cx + 5}" y2="299.5"
+                stroke="#ef4444" stroke-width="1.6" stroke-linecap="round"/>
+          <rect x="638" y="326" width="32" height="4" rx="2" fill="#c7d1dd"/>
+          <rect x="638" y="334" width="22" height="4" rx="2" fill="#d8e1ea"/>
+        </g>`;
+    }
+
+    /**
+     * The captions: a big number with the branch name under it, a dashed
+     * leader line back to the thing being described, and a pill for the two
+     * branches that have a direction worth spelling out.
+     *
+     * Everything is anchored to the geometry in `HX`; the room load is the
+     * only caption without a pipe, because it lives inside the house - the
+     * app draws it the same way, with a leader line and nothing else.
+     */
+    _hxLabels(d, hasMeter, present) {
+      const t = (en, zh) => this._t(en, zh);
+      const parts = [];
+
+      const label = (x, y, value, caption) => {
+        parts.push(`<text class="pf-kw" x="${x}" y="${y}"
+                          text-anchor="middle">${esc(value)}</text>
+                    <text class="pf-kc" x="${x}" y="${y + 17}"
+                          text-anchor="middle">${esc(caption)}</text>`);
+      };
+      const lead = (path) => parts.push(`<path class="pf-lead" d="${path}"/>`);
+      const badge = (x, y, text, fill, ink) => {
+        /* 12 units per character is a close fit for the 11.5 px label used
+           here, and the minimum keeps the two-character pills from looking
+           like a dot. */
+        const w = Math.max(50, text.length * 12 + 16);
+        parts.push(`<rect x="${(x - w / 2).toFixed(1)}" y="${y - 10}"
+                          width="${w.toFixed(1)}" height="20" rx="10" fill="${fill}"/>
+                    <text x="${x}" y="${y + 4.4}" text-anchor="middle"
+                          font-size="11.5" font-weight="600"
+                          fill="${ink}">${esc(text)}</text>`);
+      };
+
+      /* Leader lines first, so no caption can be crossed by its own line. */
+      lead("M150 414 V318"); // PV1 caption up to the roof deck
+      if (present(d.smartPlug)) lead("M472 412 L494 356");
+      if (hasMeter) lead("M654 394 V350");
+      else lead("M654 394 V344");
+      if (hasMeter && present(d.load)) lead("M338 88 L392 240");
+      if (present(d.pv2)) lead("M556 88 L546 140");
+
+      /* PV1 */
+      label(146, 428, fmtW(d.pv), t("Solar1", "光伏1"));
+
+      /* Storage: the state of charge rides along in the caption, so the pill
+         above only has to carry the direction. */
+      const soc = d.soc === null || d.soc === undefined
+        ? "" : ` · ${num(d.soc).toFixed(1)}%`;
+      label(300, 428, fmtW(d.battery), `${t("Storage", "微储")}${soc}`);
+
+      const st = String(d.status || "");
+      const discharging = st.includes("discharge");
+      const charging = !discharging && st.includes("charge");
+      if (charging) badge(300, 404, t("Charging", "充电中"), "#dcfce7", "#15803d");
+      else if (discharging) badge(300, 404, t("Discharging", "放电中"), "#ffedd5", "#c2410c");
+      else badge(300, 404, t("Standby", "待机"), "#f1f5f9", "#64748b");
+
+      /* Smart socket */
+      if (present(d.smartPlug)) {
+        label(472, 428, fmtW(d.smartPlug), t("Smart plug", "智能插座"));
+      }
+
+      /* Grid, or the merged grid & load branch when there is no meter. */
+      if (hasMeter) {
+        const g = num(d.grid);
+        if (Math.abs(g) < MIN_FLOW) {
+          badge(654, 404, t("Idle", "待机"), "#f1f5f9", "#64748b");
+        } else if (g > 0) {
+          badge(654, 404, t("Grid in", "电网输入"), "#dbeafe", "#1d4ed8");
+        } else {
+          badge(654, 404, t("Grid out", "电网输出"), "#ffedd5", "#c2410c");
+        }
+        label(654, 428, fmtW(d.grid), t("Grid", "电网"));
+      } else if (present(d.load)) {
+        label(654, 428, fmtW(d.load), t("Grid & load", "电网&负载"));
+      }
+
+      /* Room load: inside the house, so a leader line instead of a pipe. */
+      if (hasMeter && present(d.load)) {
+        label(330, 62, fmtW(d.load), t("Other loads", "其他负载"));
+      }
+
+      /* PV2 on the roof, with the green dot the app puts next to it. */
+      if (present(d.pv2)) {
+        parts.push(`<circle cx="520" cy="57" r="3.6" fill="#22c55e"/>`);
+        label(560, 62, fmtW(d.pv2), t("Solar2", "光伏2"));
+      }
+
+      return `<g class="pf-hx-labels">${parts.join("")}</g>`;
     }
 
     /**
@@ -1436,9 +2032,9 @@ function _hmPowerFlowRegister() {
      * square can never cover a connector that runs past it.
      *
      * There used to be a small arrow head on each diagonal branch showing which
-     * way the power went.  It is gone: the pearls already say that, and the
-     * arrow only added a second, coarser copy of the same information - the user
-     * asked for it to be removed.
+     * way the power went.  It is gone: the moving pulse already says that, and
+     * the arrow only added a second, coarser copy of the same information - the
+     * user asked for it to be removed.
      */
     _nodes(d, opts) {
       const t = (en, zh) => this._t(en, zh);
@@ -1459,14 +2055,14 @@ function _hmPowerFlowRegister() {
       };
 
       node(NODE_COL_L, NODE_ROW_TOP, "pv", working(d.pv),
-        fmtW(d.pv), t("PV1", "光伏1"));
+        fmtW(d.pv), t("Solar1", "光伏1"));
       node(NODE_COL_L, NODE_ROW_BOT, "battery", working(d.battery),
         `${fmtW(d.battery)}${d.soc === null ? "" : `　${num(d.soc).toFixed(2)}%`}`,
         t("Storage", "微储"));
 
       if (opts.pv2) {
         node(NODE_COL_M, NODE_ROW_TOP, "pv", working(d.pv2),
-          fmtW(d.pv2), t("PV2", "光伏2"));
+          fmtW(d.pv2), t("Solar2", "光伏2"));
       }
       if (opts.grid) {
         const g = num(d.grid);
@@ -1481,6 +2077,13 @@ function _hmPowerFlowRegister() {
       if (opts.lamp) {
         node(NODE_COL_M, NODE_ROW_BOT, "load", working(d.load),
           fmtW(d.load), t("Load", "负载"));
+      }
+      if (opts.merged) {
+        /* No meter: the grid branch is the house connection, so its node keeps
+           the grid slot and the grid artwork - the label says it covers the
+           load as well. */
+        node(NODE_COL_R, NODE_ROW_TOP, "grid", working(d.load),
+          fmtW(d.load), t("Grid & load", "电网&负载"));
       }
       if (opts.plug) {
         node(NODE_COL_R, NODE_ROW_BOT, "plug", working(d.smartPlug),
@@ -1603,8 +2206,6 @@ function _hmPowerFlowRegister() {
             @change=${this._changed("dev_id")}></ha-textfield>
           <ha-textfield label="title (accepts an en/zh map)" .value=${hmField(config.title)}
             @change=${this._changed("title")}></ha-textfield>
-          <ha-textfield label="language (auto|en|zh, auto follows Home Assistant)"
-            .value=${config.language || ""} @change=${this._changed("language")}></ha-textfield>
           <ha-textfield label="temperature_entity" .value=${config.temperature_entity || ""}
             @change=${this._changed("temperature_entity")}></ha-textfield>
           <ha-textfield label="max_width (px)" .value=${config.max_width || ""}
@@ -1612,6 +2213,8 @@ function _hmPowerFlowRegister() {
           <ha-textfield label="flow_speed (default 1, 0.5 = slower)"
             .value=${config.flow_speed === undefined ? "" : String(config.flow_speed)}
             @change=${this._changed("flow_speed")}></ha-textfield>
+          <ha-textfield label="grid_mode (auto|meter|no_meter; no_meter merges grid and load)"
+            .value=${config.grid_mode || ""} @change=${this._changed("grid_mode")}></ha-textfield>
           <label class="sw">
             <ha-switch .checked=${config.show_title !== false}
               @change=${this._toggle("show_title")}></ha-switch>
