@@ -32,16 +32,20 @@
   `tou_plan` —— 原生 options 向导和可视化卡片两条路都可以。
 - **八张捆绑卡片**，集成启动时自动注册为前端模块，**无需手动添加资源**。
   全部自绘 SVG，**不依赖 CDN、不依赖第三方卡片**，离线可用。
-- **跟随界面语言。** 八张卡片都使用**当前登录用户**的语言（`hass.language`），
-  所以同一个仪表盘对英文用户和中文用户都能正确显示，无需为每人复制一份。
-  **你自己写**的文字也能跟随 —— 把 `title` / `name` / `label` 写成映射
-  （`{en: History, zh: 历史数据}`）而不是字符串即可，详见
+- **三语，而且由看的人决定。** 支持英文 / 简体中文 / 德文，切换框只有一个，在
+  Home Assistant 顶部工具栏里（“添加 / 搜索 / 语音 / 编辑”按钮的左侧），所以每个
+  仪表盘的每个视图都能直接看到。选一次**整页卡片一起切换**，选择存在浏览器里，
+  共用墙面板不用去改 Home Assistant 个人资料。**默认英文** —— 卡片不再跟随界面
+  语言。**你自己写**的文字也能跟随 —— 把 `title` / `name` / `label` 写成映射
+  （`{en: History, zh: 历史数据, de: Verlauf}`）而不是字符串即可，详见
   [docs/CARDS.zh-Hans.md](docs/CARDS.zh-Hans.md#让自己写的文字也跟随语言)。
-  只有需要把某张卡片钉死语言时才写 `language: en` / `language: zh`。
+  只有需要把某张卡片钉死语言时才写 `language: en` / `language: zh` / `language: de`。
 
 > Home Assistant 自己的文字（`markdown` 卡片、**视图 / 页签标题**）没有按用户变化的语言，
-> 无法跟随。请写成双语（`System status / 系统状态`）或语言无关的内容。另注意：
-> 视图一旦写了 `icon`，除非显式加 `show_icon_and_title: true`，否则**只会显示图标**。
+> 工具栏切换时也无法改写，所以本集成生成的仪表盘三个页签固定为英文
+> （`System`、`Device`、`Control`）。想换成别的就自己写成双语
+> （`System status / 系统状态`）。另注意：视图一旦写了 `icon`，除非显式加
+> `show_icon_and_title: true`，否则**只会显示图标**。
 > 详见 [docs/CARDS.zh-Hans.md](docs/CARDS.zh-Hans.md#为什么视图页签无法跟随语言)。
 - **诚实的可用性判定。** 设备停止推送 2 分钟内实体转为 `unavailable`，
   而不是一直展示陈旧值。
@@ -145,8 +149,9 @@ cards:
         icon: ⚡
 ```
 
-> 上面两张卡都没有写 `language`，因此都跟随**查看者自己的**界面语言。仪表盘卡片是例外 ——
-> 它的文字来自你填的 `name`，想显示哪种语言就填哪种。详见
+> 上面两张卡都没有写 `language`，因此都使用工具栏切换框里的选择 ——
+> 没人选过就是英文。仪表盘卡片是例外 —— 它的文字来自你填的 `name`，
+> 想显示哪种语言就填哪种。详见
 > [docs/CARDS.zh-Hans.md](docs/CARDS.zh-Hans.md#语言是怎么选的)。
 
 配置 TOU 计划，两条路效果一致：
@@ -167,7 +172,7 @@ cards:
 | `custom:hoymiles-pack-list` | 紧凑电池包列表 —— SOC 进度条、温度、加热标记 |
 | `custom:hoymiles-history-chart` | 日 / 月 / 年曲线 + 日期导航，读取长期统计 |
 | `custom:hoymiles-gauge` | 单值仪表盘，支持量程换挡（如 Wh → kWh） |
-| `custom:hoymiles-control` | 开关机 / EMS 模式 / 功率 / 多相输出 / 取计划 / 重启 |
+| `custom:hoymiles-control` | 开关机 / EMS 模式 / 目标功率 / 最大输出 / 分相上限 / 取计划 / 重启 |
 | `custom:hoymiles-tou-editor` | 分时计划可视化编辑器 |
 | `custom:hoymiles-energy-sankey` | 能量流桑基图，读取长期统计 |
 
