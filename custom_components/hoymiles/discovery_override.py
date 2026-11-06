@@ -65,15 +65,18 @@ All patched payloads
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Callable
 
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 
 from . import mqtt_util
 from .const import (
     DISCOVERY_PREFIX,
+    DOMAIN,
     FIRMWARE_DISCOVERY_TOPICS,
     LEGACY_DISCOVERY_OBJECTS,
     PAYLOAD_AVAILABLE,
@@ -203,6 +206,10 @@ class FirmwareDiscoveryPatcher:
         self._patches = _managed_patches(dev_id)
         self._removed = _removed_objects(dev_id)
         self._unsubs: list[Callable[[], None]] = []
+        # Last model captured from the firmware's discovery payload (or a
+        # "claim" while it is being applied).  Used to avoid re-applying the
+        # same value on every single discovery message.
+        self._model: str | None = None
 
     async def async_setup(self) -> None:
         """Subscribe to the discovery topics of this device.
@@ -261,6 +268,12 @@ class FirmwareDiscoveryPatcher:
         if not isinstance(payload, dict):
             return
 
+        # The firmware is the only source of the product model: copy its
+        # ``device.model`` onto our own device registry entry.  See
+        # _maybe_backfill_model.  This is what makes a new prefix such as
+        # ``RMI-1650`` show its real name without any hard-coded list.
+        self._maybe_backfill_model(payload)
+
         # Both patches must run - no short circuit, they touch different keys.
         changed = patch(self.dev_id, payload)
         changed = _patch_availability(self.dev_id, payload) or changed
@@ -270,6 +283,59 @@ class FirmwareDiscoveryPatcher:
 
         rendered = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
         self.hass.async_create_task(self._async_republish(msg.topic, rendered))
+
+    @callback
+    def _maybe_backfill_model(self, payload: dict[str, Any]) -> None:
+        """Copy the firmware-reported model onto our own device registry entry.
+
+        The integration's entities are created with ``model: null`` because the
+        product model is only known once the firmware publishes a discovery
+        payload (its ``device.model``).  Backfilling it here means any device
+        prefix - ``MSA-2800`` / ``MSA-2804`` / ``MSA-2805`` / ``RMI-1650`` and
+        future ones - shows its real name without a hard-coded list.
+        """
+        device = payload.get("device")
+        if not isinstance(device, dict):
+            return
+
+        model = device.get("model")
+        if not isinstance(model, str) or not model.strip():
+            return
+        model = model.strip()
+
+        # Claim the value up front so several discovery messages arriving back
+        # to back do not each spawn an apply task for the same model.
+        if self._model == model:
+            return
+        self._model = model
+
+        self.hass.async_create_task(self._async_apply_model(model))
+
+    async def _async_apply_model(self, model: str) -> None:
+        """Apply the captured model, waiting briefly for our device to exist.
+
+        The device registry entry is only created when an entity is first added,
+        which happens *after* this patcher subscribes.  A retained discovery
+        message can therefore arrive before the entry exists; a short retry loop
+        covers that startup race.
+        """
+        registry = dr.async_get(self.hass)
+
+        for _ in range(10):
+            entry = registry.async_get_device(identifiers={(DOMAIN, self.dev_id)})
+            if entry is not None:
+                if entry.model != model:
+                    registry.async_update_device(entry.id, model=model)
+                    _LOGGER.info("Set model %r for device %s", model, self.dev_id)
+                return
+            await asyncio.sleep(1.0)
+
+        # The entry never appeared (integration torn down mid-startup?).  Clear
+        # the claim so a later discovery message retries instead of giving up.
+        self._model = None
+        _LOGGER.debug(
+            "Device %s not registered yet, model backfill deferred", self.dev_id
+        )
 
     async def _async_republish(self, topic: str, payload: str) -> None:
         """Publish the corrected payload, retained so it survives HA restarts."""
