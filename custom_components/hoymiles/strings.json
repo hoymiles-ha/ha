@@ -7,6 +7,13 @@
         "data": {
           "dev_id": "Device ID"
         }
+      },
+      "dashboard": {
+        "title": "Dashboard",
+        "description": "Create the bundled dashboard (System / Device / Control) for {dev_id}? It is a normal Lovelace dashboard you can edit later.",
+        "data": {
+          "create_dashboard": "Create a dashboard for this device"
+        }
       }
     },
     "error": {
@@ -25,6 +32,7 @@
           "week_plan": "Edit week plan",
           "get_plan": "Get current plan",
           "set_mode": "Set EMS mode",
+          "dashboard": "Create dashboard",
           "reboot": "Reboot device"
         }
       },
@@ -81,11 +89,22 @@
         "data": {
           "confirm": "Confirm reboot"
         }
+      },
+      "dashboard": {
+        "title": "Create dashboard",
+        "description": "Build the bundled dashboard (System / Device / Control) for {dev_id}. With overwrite off, an existing dashboard and your edits are kept.",
+        "data": {
+          "overwrite": "Overwrite the existing dashboard"
+        }
       }
     },
     "abort": {
       "empty_week_plan": "No weekday was mapped to a day plan, nothing was sent",
-      "get_plan_failed": "The device did not answer the plan query"
+      "get_plan_failed": "The device did not answer the plan query",
+      "dashboard_created": "Dashboard created",
+      "dashboard_updated": "Dashboard rebuilt",
+      "dashboard_exists": "A dashboard already exists for this device, nothing was changed",
+      "dashboard_failed": "The dashboard could not be created"
     }
   },
   "services": {
@@ -137,6 +156,14 @@
         "phase_a": { "name": "Phase A limit", "description": "Output power limit in watt (100..2500)." },
         "phase_b": { "name": "Phase B limit", "description": "Output power limit in watt (100..2500)." },
         "phase_c": { "name": "Phase C limit", "description": "Output power limit in watt (100..2500)." }
+      }
+    },
+    "create_dashboard": {
+      "name": "Create device dashboard",
+      "description": "Build the bundled Lovelace dashboard (System / Device / Control) for one device.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." },
+        "overwrite": { "name": "Overwrite", "description": "Rebuild the layout even when the dashboard already exists." }
       }
     }
   }

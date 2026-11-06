@@ -187,3 +187,119 @@ set_phase_output_power:
           max: 2500
           step: 1
           mode: box
+
+create_dashboard:
+  name: Create device dashboard
+  description: Build the bundled Lovelace dashboard (System / Device / Control) for one device.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "MSA-280520260806"
+      selector:
+        text:
+    overwrite:
+      name: Overwrite
+      description: Rebuild the layout even when the dashboard already exists. Leave off to keep your own edits.
+      required: false
+      default: false
+      selector:
+        boolean:
+
+set_power_ctrl:
+  name: Set power setpoint (repeating)
+  description: >-
+    Publish an MQTT power setpoint and keep re-publishing it in Home Assistant.
+    The firmware drops power_ctrl unless it is refreshed at least once a minute,
+    so the timer runs here rather than in the browser - it survives page changes
+    and a closed browser. Stops on its own when Home Assistant restarts, and on
+    stop_power_ctrl.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "MSA-280520260806"
+      selector:
+        text:
+    value:
+      name: Setpoint
+      description: Target power in watt. Positive discharges, negative charges.
+      required: true
+      example: -380
+      selector:
+        number:
+          min: -1000
+          max: 1000
+          step: 1
+          mode: box
+    interval:
+      name: Repeat every
+      description: Seconds between re-publishes. Keep it well below 60 s.
+      required: false
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 3600
+          step: 1
+          mode: box
+
+stop_power_ctrl:
+  name: Stop power setpoint repeat
+  description: >-
+    Stop re-publishing the setpoint. The device drops it within about a minute
+    and goes back to regulating the charge and discharge power on its own.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "MSA-280520260806"
+      selector:
+        text:
+
+get_power_ctrl:
+  name: Get power setpoint repeat
+  description: >-
+    Report whether a setpoint is being re-published, which value, at which
+    interval and how many seconds are left until the next send. Returns a
+    response, so it is used by the card to restore itself and by templates.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "MSA-280520260806"
+      selector:
+        text:
+

@@ -17,10 +17,12 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from . import mqtt_util
+from .power_repeat import get_manager as get_repeat_manager
 from .const import (
     AVAILABILITY_WATCHDOG_SECONDS,
     DOMAIN,
     EMS_MODE_ECHO_GUARD_SECONDS,
+    EMS_MODE_MQTT_CTRL,
     EMS_MODES,
     PAYLOAD_AVAILABLE,
     PAYLOAD_NOT_AVAILABLE,
@@ -253,6 +255,8 @@ class HoymilesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if mode not in EMS_MODES:
             return
 
+        self.hass.async_create_task(self._async_stop_repeat_if_needed(mode))
+
         self._ems_mode_command_time = time.monotonic()
         if mode == self._ems_mode_state:
             return
@@ -271,7 +275,31 @@ class HoymilesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ) < EMS_MODE_ECHO_GUARD_SECONDS:
             return
 
+        # The device gave up the MQTT setpoint - either because the mode was
+        # changed elsewhere or because the lease expired.  Either way the
+        # repeat has nothing left to protect.
+        await self._async_stop_repeat_if_needed(mode)
         await self._async_publish_ems_mode_state(mode)
+
+    async def _async_stop_repeat_if_needed(self, mode: str) -> None:
+        """Drop a running power setpoint repeat when MQTT control is left.
+
+        ``power_ctrl`` only means anything in ``mqtt_ctrl``: in the other two
+        modes the device derives the setpoint itself, so a leftover repeat would
+        keep pushing a value the firmware is not using - and, worse, silently
+        resume the old setpoint the next time the user switched back.
+        """
+        if mode == EMS_MODE_MQTT_CTRL:
+            return
+        manager = get_repeat_manager(self.hass)
+        if manager.active(self.dev_id) is None:
+            return
+        await manager.async_stop(self.dev_id)
+        _LOGGER.info(
+            "EMS mode for %s became %s: stopped the power_ctrl repeat",
+            self.dev_id,
+            mode,
+        )
 
     async def _async_publish_ems_mode_state(self, mode: str) -> None:
         """Publish the EMS mode, retained so it survives a HA restart."""
