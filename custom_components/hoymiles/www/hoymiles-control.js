@@ -465,7 +465,7 @@ function _hmControlRegister() {
         :host { display: block; }
         ha-card { padding: 14px 16px 16px; }
         .head { display: flex; align-items: baseline; gap: 10px;
-                margin-bottom: 12px; }
+                flex-wrap: wrap; margin-bottom: 12px; }
         .head .title { font-size: 17px; font-weight: 600;
                        color: var(--primary-text-color); }
         .head .sub { font-size: 12.5px; color: var(--secondary-text-color); }
@@ -480,6 +480,11 @@ function _hmControlRegister() {
         .item { display: flex; align-items: center; gap: 12px;
                 padding: 11px 14px; min-height: 52px;
                 box-sizing: border-box; position: relative; }
+        /* The group clips its content (overflow: hidden), so a row that does not
+           fit has to wrap instead of spilling: when the card is narrow the
+           control moves to its own line below the label. Without this the
+           segmented control was cut off once the dashboard column shrank. */
+        .item:not(.stack) { flex-wrap: wrap; }
         .item + .item::before {
           content: ""; position: absolute; top: 0; left: 14px; right: 0;
           height: 1px; background: var(--divider-color); opacity: .7;
@@ -488,15 +493,21 @@ function _hmControlRegister() {
                      font-size: 16px; line-height: 1; }
         .item .nm { flex: 1 1 auto; min-width: 0; font-size: 15px;
                     color: var(--primary-text-color); line-height: 1.3; }
+        /* Row layout only: giving the label a real basis keeps it readable and
+           makes the control wrap first instead of squeezing the label to 0. */
+        .item:not(.stack) .nm { flex: 1 1 7.5em; }
         .item .nm small { display: block; font-size: 12px; font-weight: 400;
                           color: var(--secondary-text-color); margin-top: 2px;
                           line-height: 1.35; }
         .item .nm code { font-size: 11px; color: var(--secondary-text-color);
                          word-break: break-all; }
-        .item .ctrl { flex: 0 0 auto; display: flex; align-items: center;
-                      gap: 8px; margin-left: auto; }
+        .item .ctrl { flex: 0 1 auto; display: flex; align-items: center;
+                      gap: 8px; margin-left: auto;
+                      flex-wrap: wrap; justify-content: flex-end;
+                      max-width: 100%; }
         .item.stack { flex-direction: column; align-items: stretch; gap: 8px; }
-        .item.stack .ctrl { margin-left: 0; flex-wrap: wrap; }
+        .item.stack .ctrl { margin-left: 0; flex: 0 0 auto;
+                            flex-wrap: wrap; justify-content: flex-start; }
         .item .ctrl .unit { font-size: 13px; color: var(--secondary-text-color); }
 
         /* Periodic send, as a second line under the sliders. It is a plain row
@@ -522,6 +533,7 @@ function _hmControlRegister() {
 
         /* segmented control (the iOS signature control) */
         .seg { display: inline-flex; padding: 2px; gap: 2px;
+               max-width: 100%; flex-wrap: wrap;
                background: var(--secondary-background-color, rgba(120,120,128,.16));
                border-radius: 10px; }
         .seg button {
@@ -593,7 +605,8 @@ function _hmControlRegister() {
            follows the knob without needing a second element.
            NOTE: never write a backtick inside this css template (not even in a
            comment) - it would terminate the template string. */
-        .slider { display: flex; align-items: center; gap: 10px; width: 100%; }
+        .slider { display: flex; align-items: center; gap: 10px;
+                  width: 100%; flex-wrap: wrap; }
         .slider.end { justify-content: flex-end; }
         .slider .tag { flex: 0 0 auto; width: 12px; font-size: 13px;
                        color: var(--secondary-text-color); }
