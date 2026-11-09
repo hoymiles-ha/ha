@@ -8,6 +8,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow
 from homeassistant.core import callback
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
@@ -15,7 +16,7 @@ from homeassistant.helpers.selector import (
 )
 
 from . import mqtt_util
-from .const import CONF_DEV_ID, DOMAIN, NAME
+from .const import CONF_CREATE_DASHBOARD, CONF_DEV_ID, DOMAIN, NAME
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class HoymilesConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._discovered: list[str] = []
+        self._dev_id: str = ""
 
     @staticmethod
     @callback
@@ -49,9 +51,8 @@ class HoymilesConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 await self.async_set_unique_id(dev_id)
                 self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=dev_id, data={CONF_DEV_ID: dev_id}
-                )
+                self._dev_id = dev_id
+                return await self.async_step_dashboard()
 
         if not self._discovered:
             self._discovered = await mqtt_util.async_discover_dev_ids(self.hass)
@@ -83,4 +84,34 @@ class HoymilesConfigFlow(ConfigFlow, domain=DOMAIN):
                 "name": NAME,
                 "count": str(len(options)),
             },
+        )
+
+    async def async_step_dashboard(
+        self, user_input: dict[str, Any] | None = None
+    ) -> Any:
+        """Ask whether to build the bundled dashboard for this device.
+
+        The dashboard itself cannot be written here: it references entity ids
+        that only exist once the config entry has been set up.  The answer is
+        therefore stored on the entry and acted on in ``async_setup_entry``.
+        """
+        if user_input is not None:
+            return self.async_create_entry(
+                title=self._dev_id,
+                data={
+                    CONF_DEV_ID: self._dev_id,
+                    CONF_CREATE_DASHBOARD: bool(
+                        user_input.get(CONF_CREATE_DASHBOARD, True)
+                    ),
+                },
+            )
+
+        return self.async_show_form(
+            step_id="dashboard",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_CREATE_DASHBOARD, default=True): cv.boolean,
+                }
+            ),
+            description_placeholders={"dev_id": self._dev_id},
         )

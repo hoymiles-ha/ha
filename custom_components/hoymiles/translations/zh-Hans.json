@@ -7,6 +7,13 @@
         "data": {
           "dev_id": "设备标识"
         }
+      },
+      "dashboard": {
+        "title": "仪表盘",
+        "description": "是否为 {dev_id} 生成完整仪表盘（系统 / 设备 / 控制 三页）？它就是普通的 Lovelace 仪表盘，之后可以随时编辑。",
+        "data": {
+          "create_dashboard": "为该设备生成仪表盘"
+        }
       }
     },
     "error": {
@@ -25,6 +32,7 @@
           "week_plan": "编辑周计划",
           "get_plan": "获取当前计划",
           "set_mode": "设置 EMS 模式",
+          "dashboard": "生成仪表盘",
           "reboot": "重启设备"
         }
       },
@@ -81,11 +89,22 @@
         "data": {
           "confirm": "确认重启"
         }
+      },
+      "dashboard": {
+        "title": "生成仪表盘",
+        "description": "为 {dev_id} 生成完整仪表盘（系统 / 设备 / 控制）。不勾选覆盖时，已有仪表盘及你的修改会原样保留。",
+        "data": {
+          "overwrite": "覆盖已有仪表盘"
+        }
       }
     },
     "abort": {
       "empty_week_plan": "没有任何星期被指定日计划，未下发",
-      "get_plan_failed": "设备未应答计划查询"
+      "get_plan_failed": "设备未应答计划查询",
+      "dashboard_created": "仪表盘已生成",
+      "dashboard_updated": "仪表盘已重建",
+      "dashboard_exists": "该设备已有仪表盘，未做任何改动",
+      "dashboard_failed": "仪表盘生成失败"
     }
   },
   "services": {
@@ -137,6 +156,14 @@
         "phase_a": { "name": "A 相限值", "description": "A 相输出功率限值 (W, 100..2500)" },
         "phase_b": { "name": "B 相限值", "description": "B 相输出功率限值 (W, 100..2500)" },
         "phase_c": { "name": "C 相限值", "description": "C 相输出功率限值 (W, 100..2500)" }
+      }
+    },
+    "create_dashboard": {
+      "name": "生成设备仪表盘",
+      "description": "为单台设备生成完整仪表盘（系统 / 设备 / 控制）。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" },
+        "overwrite": { "name": "覆盖", "description": "即使仪表盘已存在也重新生成布局" }
       }
     }
   }

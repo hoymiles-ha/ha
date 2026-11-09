@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    CONF_CREATE_DASHBOARD,
     CONF_DEV_ID,
     DOMAIN,
     FRONTEND_ASSETS,
@@ -17,7 +18,15 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import HoymilesCoordinator
+from .dashboard import (
+    RESULT_CREATED,
+    RESULT_EXISTS,
+    RESULT_UPDATED,
+    async_create_device_dashboard,
+    async_upgrade_dashboard_template,
+)
 from .discovery_override import FirmwareDiscoveryPatcher
+from .power_repeat import get_manager as get_repeat_manager
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,7 +57,57 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await _async_register_frontend(hass)
     await async_setup_services(hass)
+    await _async_maybe_create_dashboard(hass, entry, dev_id)
     return True
+
+
+async def _async_maybe_create_dashboard(
+    hass: HomeAssistant, entry: ConfigEntry, dev_id: str
+) -> None:
+    """Install the device dashboard when the user asked for one.
+
+    Runs after ``async_forward_entry_setups`` because the dashboard references
+    entity ids, which only exist once the platforms have been set up.
+
+    A dashboard that already exists is normally left alone, so user edits are
+    never overwritten on a restart.  The one exception is a dashboard that still
+    matches the exact content this integration generated for it: when the
+    bundled template has moved on it is rebuilt, which is what keeps every device
+    looking the same.  Editing the dashboard by hand opts it out for good.
+
+    Entries created before the config flow asked the question have no
+    ``create_dashboard`` key at all.  They used to be skipped, which is why a
+    device added months ago kept an old layout (or no dashboard) while a new one
+    looked completely different.  A missing key therefore means "yes": the
+    bundled dashboard is the integration's output for every device.
+    """
+    if not entry.data.get(CONF_CREATE_DASHBOARD, True):
+        return
+    try:
+        result = await async_create_device_dashboard(hass, dev_id)
+        if result == RESULT_EXISTS:
+            upgraded = await async_upgrade_dashboard_template(hass, dev_id)
+            if upgraded is not None:
+                result = upgraded
+    except Exception:  # noqa: BLE001 - a dashboard must never break the setup
+        _LOGGER.warning(
+            "Unable to create the dashboard for %s", dev_id, exc_info=True
+        )
+        return
+
+    if result in (RESULT_CREATED, RESULT_UPDATED):
+        _LOGGER.info("Dashboard for %s: %s", dev_id, result)
+        return
+
+    # Silence here is what made a half-created dashboard look like a bug in the
+    # integration instead of a message the user could act on, so the leftover
+    # cases are reported at warning level with the fix spelled out.
+    _LOGGER.warning(
+        "Dashboard for %s was not built (%s); run the hoymiles.create_dashboard "
+        "service for this device to retry",
+        dev_id,
+        result,
+    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -57,6 +116,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unloaded:
         entry_data = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
         if entry_data:
+            # A running re-publish job for a device that is being removed would
+            # keep talking to the broker forever, so it stops with the entry.
+            await get_repeat_manager(hass).async_stop(entry_data["dev_id"])
             entry_data["patcher"].async_shutdown()
             await entry_data["coordinator"].async_shutdown()
     return unloaded

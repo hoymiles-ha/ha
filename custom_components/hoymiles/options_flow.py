@@ -41,6 +41,11 @@ from .const import (
     TOU_TS_MAX,
     TOU_WEEKDAYS,
 )
+from .dashboard import (
+    RESULT_CREATED,
+    RESULT_UPDATED,
+    async_create_device_dashboard,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,7 +93,41 @@ class HoymilesOptionsFlow(OptionsFlow):
     ) -> FlowResult:
         return self.async_show_menu(
             step_id="init",
-            menu_options=["day_plan", "week_plan", "get_plan", "set_mode", "reboot"],
+            menu_options=[
+                "day_plan",
+                "week_plan",
+                "get_plan",
+                "set_mode",
+                "dashboard",
+                "reboot",
+            ],
+        )
+
+    # ------------------------------------------------------------------
+    # dashboard
+    # ------------------------------------------------------------------
+    async def async_step_dashboard(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """(Re)build the bundled dashboard for this device."""
+        if user_input is not None:
+            result = await async_create_device_dashboard(
+                self.hass,
+                self._dev_id,
+                overwrite=bool(user_input.get("overwrite", False)),
+            )
+            if result in (RESULT_CREATED, RESULT_UPDATED):
+                return self.async_abort(reason=f"dashboard_{result}")
+            if result == "exists":
+                return self.async_abort(reason="dashboard_exists")
+            return self.async_abort(reason="dashboard_failed")
+
+        return self.async_show_form(
+            step_id="dashboard",
+            data_schema=vol.Schema(
+                {vol.Required("overwrite", default=False): cv.boolean}
+            ),
+            description_placeholders={"dev_id": self._dev_id},
         )
 
     # ------------------------------------------------------------------

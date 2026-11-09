@@ -26,7 +26,7 @@
  *   type: custom:hoymiles-energy-sankey
  *   dev_id: MSA-280520260806      # required
  *   title: Energy flow            # optional
- *   language: en                  # optional (en|zh); omit to follow Home Assistant
+ *   language: en                  # optional (en|zh|de); omit to follow Home Assistant
  *   range: today                  # optional (today|7d|30d|month)
  *   balancer_label: Loss          # optional label for the residual node
  *   show_toolbar: true            # optional
@@ -62,18 +62,107 @@ function _hmSankeyRegister() {
   /* ------------------------------------------------------------------ *
    * Language
    *
-   * An explicit `language:` in the card config wins. When it is absent the
-   * card follows the Home Assistant user's language (`hass.language`), so a
-   * dashboard matches the UI without per-card configuration. Any Chinese
-   * variant counts as Chinese - Home Assistant reports `zh-Hans` / `zh-Hant`
-   * and may carry a region suffix such as `zh-Hans-CN`.
+   * Three languages: English, Simplified Chinese and German.
+   *
+   * Resolution order, first hit wins:
+   *   1. `language:` on the card - an explicit choice, and what an older
+   *      dashboard may already carry;
+   *   2. the Home Assistant user's language, so the cards follow the UI like
+   *      every built-in one does;
+   *   3. English.
+   *
+   * `zh-Hans` / `zh-Hant` / `zh-CN` all collapse to `zh`: the wording is the
+   * same in either script, and the card has no Traditional translation to
+   * offer.  `de-AT` / `de-CH` collapse to `de` for the same reason.
    * ------------------------------------------------------------------ */
-  function hmLang(hass, config) {
-    const wanted = config && config.language;
-    if (wanted) return String(wanted).toLowerCase().startsWith("zh") ? "zh" : "en";
-    const ui = hass && hass.language;
-    return ui && String(ui).toLowerCase().startsWith("zh") ? "zh" : "en";
+  /* German wording, keyed by the English string.
+
+     Keyed by English on purpose: the call sites pass English and Chinese
+     only, so they needed no third argument when German was added, and a
+     missing entry falls back to English instead of leaving a blank. */
+  const T_DE = {
+    "No energy sensor of this device was found. Check that the integration is set up and the device is online.": "Es wurde kein Energie-Sensor dieses Geräts gefunden. Prüfe, ob die Integration eingerichtet und das Gerät online ist.",
+    "The recorder integration is unavailable, so long-term statistics cannot be read.": "Die Recorder-Integration ist nicht verfügbar, daher können keine Langzeitstatistiken gelesen werden.",
+    "Failed to read statistics": "Statistiken konnten nicht gelesen werden",
+    "Energy flow": "Energiefluss",
+    "total": "gesamt",
+    "Click again to clear.": "Erneut klicken zum Aufheben.",
+    "Refresh": "Aktualisieren",
+    "Reading statistics…": "Statistiken werden gelesen…",
+    "No data yet.": "Noch keine Daten.",
+    "No energy was recorded in the selected period.": "Im gewählten Zeitraum wurde keine Energie aufgezeichnet.",
+    "Tip: click a ribbon or a node box to highlight that part of the flow.": "Tipp: Auf ein Band oder einen Knoten klicken, um diesen Teil des Flusses hervorzuheben.",
+    "Ports are metered independently, so a balance line is shown for conversion losses and unmeasured flows.": "Die Anschlüsse werden unabhängig gemessen; deshalb zeigt eine Ausgleichslinie Wandlungsverluste und nicht gemessene Flüsse.",
+    "No statistics yet for: ": "Noch keine Statistiken für: ",
+  };
+
+  /** Map any Home Assistant language tag to one of the three card languages. */
+  function hmNormalise(value) {
+    const raw = String(value == null ? "" : value).toLowerCase();
+    if (raw.startsWith("zh")) return "zh";
+    if (raw.startsWith("de")) return "de";
+    if (raw.startsWith("en")) return "en";
+    return "";
   }
+
+  /* ------------------------------------------------------------------ *
+   * The language the user picked
+   *
+   * The choice belongs to the viewer, not to the dashboard: it lives in one
+   * localStorage key and is announced with one window event, so the dropdown
+   * on any card switches every card on the page at once, and the choice
+   * survives a reload.
+   *
+   * English is the default.  It deliberately does NOT follow the Home
+   * Assistant UI language any more: a dashboard is often shared, and the point
+   * of the dropdown is that the reader decides.
+   * ------------------------------------------------------------------ */
+  const LANG_KEY = "hoymiles.language";
+  const LANG_EVENT = "hoymiles-language";
+  const LANG_CHOICES = [["en", "English"], ["zh", "\u4e2d\u6587"], ["de", "Deutsch"]];
+
+  /** The stored choice, or "" when nothing has been picked (or no storage). */
+  function hmStored() {
+    try {
+      return hmNormalise(window.localStorage.getItem(LANG_KEY));
+    } catch (err) {
+      return ""; // private mode / storage disabled: fall back to the default
+    }
+  }
+
+  /** Remember a choice and tell every card about it. */
+  function hmSetLang(value) {
+    const lang = hmNormalise(value) || "en";
+    try {
+      window.localStorage.setItem(LANG_KEY, lang);
+    } catch (err) {
+      /* nothing to remember it with; the event still switches this page */
+    }
+    window.dispatchEvent(new CustomEvent(LANG_EVENT, { detail: lang }));
+  }
+
+  function hmLang(hass, config) {
+    return hmStored() || hmNormalise(config && config.language) || "en";
+  }
+
+  /**
+   * One of the three wordings.
+   *
+   * German comes from the card's own dictionary, keyed by the English string -
+   * that is why `_t()` call sites did not have to change when the third
+   * language was added.  A missing entry falls back to English, so an
+   * untranslated string shows English rather than nothing.
+   */
+  function hmPick(lang, en, zh) {
+    if (lang === "zh") return zh;
+    if (lang === "de") {
+      const de = T_DE[en];
+      return de == null ? en : de;
+    }
+    return en;
+  }
+
+  /* (hmLang defined above, with the dictionary.) */
 
   /* ------------------------------------------------------------------ *
    * Localised config strings
@@ -88,8 +177,8 @@ function _hmSankeyRegister() {
    *     en: Loss / other
    *     zh: 损耗/其他
    *
-   * That is what lets the text *you* write follow the UI language too, instead
-   * of pinning a dashboard to one language. A map missing the current language
+   * That is what lets the text *you* write follow the language the reader
+   * picked, instead of pinning a dashboard to one language. A map missing the current language
    * falls back to `en`, then to whichever entry exists.
    * ------------------------------------------------------------------ */
   function hmText(value, lang) {
@@ -215,6 +304,53 @@ function _hmSankeyRegister() {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : 0;
   }
+
+  /* ------------------------------------------------------------------ *
+   * Icon set
+   *
+   * The same filled, multi-colour SVG language as the control and gauge cards,
+   * so the header of this card does not fall back to an emoji while the rest of
+   * the dashboard is drawn art.  Only the flow-related shapes live here; the
+   * gauge card carries the production / battery ones.
+   *
+   * `icon:` takes one of these names, or any other string, which is rendered as
+   * text - that keeps an `icon: 📊` config working.
+   * ------------------------------------------------------------------ */
+  const ICON_SVG = {
+    /* Three coloured sources merging into one thick slate line. */
+    flow: (u) => `
+      <g fill="none" stroke-linecap="round" stroke-width="2.5">
+        <path d="M2.2 5.4h3.3l3.7 5.3" stroke="#f59e0b"/>
+        <path d="M2.2 12h7" stroke="#22c55e"/>
+        <path d="M2.2 18.6h3.3l3.7-5.3" stroke="#3b82f6"/>
+        <path d="M10.9 12h10.9" stroke="#94a3b8" stroke-width="3.4"/>
+      </g>
+      <circle cx="9.9" cy="12" r="1.8" fill="#94a3b8"/>`,
+
+    /* Two source nodes and a sink, joined by ribbons: a sankey diagram. */
+    sankey: (u) => `
+      <rect x="1.5" y="2.8" width="2.7" height="6.6" rx="1.1" fill="#f59e0b"/>
+      <rect x="1.5" y="14.6" width="2.7" height="6.6" rx="1.1" fill="#22c55e"/>
+      <rect x="19.8" y="6.2" width="2.7" height="11.6" rx="1.1" fill="#3b82f6"/>
+      <g fill="none" stroke-width="1.9" stroke-linecap="round">
+        <path d="M4.6 6.1c3.3 0 5.9 4.3 8.6 4.3 2.1 0 3.3-.8 6.1-1.6"
+          stroke="#f59e0b" stroke-opacity=".8"/>
+        <path d="M4.6 17.9c3.3 0 5.9-4.3 8.6-4.3 2.1 0 3.3.8 6.1 1.6"
+          stroke="#22c55e" stroke-opacity=".8"/>
+      </g>`,
+
+    /* Two arrows in opposite directions: "in and out", an exchange. */
+    swap: (u) => `
+      <g stroke-linecap="round" stroke-width="2.1" fill="none">
+        <path d="M3 8.4h13.4" stroke="#f59e0b"/>
+        <path d="M21 15.6H7.6" stroke="#22c55e"/>
+      </g>
+      <path fill="#f59e0b" d="M14.9 4.9 20.2 8.4l-5.3 3.5z"/>
+      <path fill="#22c55e" d="M9.1 12.1 3.8 15.6L9.1 19.1z"/>`,
+
+    /* A neutral fallback, so an unknown name is never invisible. */
+    dot: () => `<circle cx="12" cy="12" r="4.2" fill="currentColor"/>`,
+  };
 
   /** Split a kWh value into a readable number + unit (484 Wh / 4.74 kWh). */
   function splitEnergy(kwh) {
@@ -411,7 +547,9 @@ function _hmSankeyRegister() {
         ha-card { padding: 12px 14px 14px; }
         .head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center;
                 justify-content: space-between; }
-        .title { font-size: 15px; font-weight: 500; color: var(--primary-text-color); }
+        .title { font-size: 15px; font-weight: 500; color: var(--primary-text-color);
+                 display: flex; align-items: center; gap: 7px; }
+        .title svg { display: block; flex: none; }
         .total { font-size: 12px; color: var(--secondary-text-color); }
         .toolbar { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 4px; }
         .pill { padding: 3px 10px; border: 1px solid var(--divider-color); border-radius: 999px;
@@ -493,7 +631,24 @@ function _hmSankeyRegister() {
 
     /* --------------------------- text / config --------------------------- */
 
-    _t(en, zh) { return hmLang(this._hass, this._config) === "zh" ? zh : en; }
+    /**
+     * Language changes are announced on `window`; re-rendering is all a card
+     * has to do, because the wording is chosen while it renders.
+     */
+    connectedCallback() {
+      super.connectedCallback();
+      this._onLangChange = () => this.requestUpdate();
+      window.addEventListener(LANG_EVENT, this._onLangChange);
+    }
+
+    disconnectedCallback() {
+      window.removeEventListener(LANG_EVENT, this._onLangChange);
+      super.disconnectedCallback();
+    }
+
+    _t(en, zh) {
+      return hmPick(hmLang(this._hass, this._config), en, zh);
+    }
 
     /** Resolve one user-supplied string (plain string or language map). */
     _text(value) {
@@ -1038,7 +1193,7 @@ function _hmSankeyRegister() {
       return html`
         <ha-card @click=${this._handleClick}>
           <div class="head">
-            <span class="title">${title}</span>
+            <span class="title">${this._icon(this._config.icon)}${title}</span>
             ${this._graph && !this._graph.empty
               ? html`<span class="total">${esc(fmtEnergy(this._graph.total))}</span>`
               : ""}
@@ -1069,6 +1224,24 @@ function _hmSankeyRegister() {
      * We render SVG via innerHTML because Lit has no cheap SVG builder here;
      * every interpolated value goes through `esc()` in `_chart`/`_legend`.
      */
+    /**
+     * The header icon: a named SVG from the built-in set, or plain text.
+     *
+     * A name that is not in the set falls through to text, which keeps an
+     * `icon: 📊` config working.  The SVG is injected as a string: a `<path>`
+     * built inside a lit template is parsed in the HTML namespace and never
+     * paints, while the HTML parser handles SVG foreign content correctly.
+     */
+    _icon(name) {
+      if (!name) return "";
+      const build = ICON_SVG[name];
+      if (!build) return esc(String(name));
+      const uid = "hms" + (this._iconSeq = (this._iconSeq || 0) + 1) + "-";
+      const svg = `<svg viewBox="0 0 24 24" width="19" height="19" `
+        + `xmlns="http://www.w3.org/2000/svg">${build(uid)}</svg>`;
+      return this._untrusted(svg);
+    }
+
     _untrusted(markup) {
       const template = document.createElement("template");
       template.innerHTML = markup;
@@ -1112,8 +1285,9 @@ function _hmSankeyRegister() {
             @change=${this._valueChanged("dev_id")}></ha-textfield>
           <ha-textfield label="title (accepts an en/zh map)" .value=${hmField(config.title)}
             @change=${this._valueChanged("title")}></ha-textfield>
-          <ha-textfield label="language (auto|en|zh, auto follows Home Assistant)"
-            .value=${config.language || ""} @change=${this._valueChanged("language")}></ha-textfield>
+          <ha-textfield label="icon (flow | sankey | swap, or any text)"
+            .value=${config.icon || ""}
+            @change=${this._valueChanged("icon")}></ha-textfield>
           <ha-textfield label="range (${ranges.join("|")})" .value=${config.range || DEFAULT_RANGE}
             @change=${this._valueChanged("range")}></ha-textfield>
           <ha-textfield label="balancer_label (accepts an en/zh map)" .value=${hmField(config.balancer_label)}

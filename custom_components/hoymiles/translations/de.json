@@ -1,0 +1,170 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Hoymiles Official",
+        "description": "{count} Gerät(e) gefunden. Wähle eines aus der Liste oder gib die Geräte-ID von Hand ein. Die Geräte-ID hat die Form client_prefix-SN.",
+        "data": {
+          "dev_id": "Geräte-ID"
+        }
+      },
+      "dashboard": {
+        "title": "Dashboard",
+        "description": "Das mitgelieferte Dashboard (System / Gerät / Steuerung) für {dev_id} anlegen? Es ist ein normales Lovelace-Dashboard, das du später bearbeiten kannst.",
+        "data": {
+          "create_dashboard": "Ein Dashboard für dieses Gerät anlegen"
+        }
+      }
+    },
+    "error": {
+      "dev_id_required": "Eine Geräte-ID ist erforderlich"
+    },
+    "abort": {
+      "already_configured": "Dieses Gerät ist bereits eingerichtet"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "TOU-Plan",
+        "menu_options": {
+          "day_plan": "Tagesplan bearbeiten",
+          "week_plan": "Wochenplan bearbeiten",
+          "get_plan": "Aktuellen Plan abrufen",
+          "set_mode": "EMS-Modus setzen",
+          "dashboard": "Dashboard anlegen",
+          "reboot": "Gerät neu starten"
+        }
+      },
+      "day_plan": {
+        "title": "Tagesplan",
+        "description": "Wähle den Tagesplan (day1..day8) und die Anzahl seiner Zeitsegmente (max. 12).",
+        "data": {
+          "day_idx": "Index des Tagesplans",
+          "segments": "Anzahl der Segmente"
+        }
+      },
+      "day_segment": {
+        "title": "Segment {index} von {total} ({day})",
+        "description": "Modus 1 = Zwangsladen, 2 = PV-Laden, 4 = Entladen. ts/te sind 15-Minuten-Slots (0-96), sh/sl sind Ladezustände in %, pc/pd sind Leistungsgrenzen in W.",
+        "data": {
+          "mode": "Modus",
+          "ts": "Start-Slot",
+          "te": "End-Slot",
+          "sh": "Ladezustand beim Stoppen",
+          "sl": "Entladezustand beim Stoppen",
+          "pc": "Ladeleistungsgrenze",
+          "pd": "Entladeleistungsgrenze"
+        }
+      },
+      "week_plan": {
+        "title": "Wochenplan",
+        "description": "Ordne jedem Wochentag einen Tagesplan zu. Wähle „none“, damit an diesem Tag der Eigenverbrauch läuft.",
+        "data": {
+          "mon": "Montag",
+          "tue": "Dienstag",
+          "wed": "Mittwoch",
+          "thu": "Donnerstag",
+          "fri": "Freitag",
+          "sat": "Samstag",
+          "sun": "Sonntag"
+        }
+      },
+      "get_plan": {
+        "title": "Aktuellen Plan abrufen",
+        "description": "Fragt den aktuell konfigurierten Plan für einen Wochentag ab. Das Ergebnis steht im Status-Sensor und in einer Benachrichtigung.",
+        "data": {
+          "week": "Wochentag"
+        }
+      },
+      "set_mode": {
+        "title": "EMS-Modus setzen",
+        "description": "general = Eigenverbrauch des Geräts, mqtt_ctrl = Leistungssteuerung über MQTT, tou_plan = Zeitprogramm.",
+        "data": {
+          "mode": "EMS-Modus"
+        }
+      },
+      "reboot": {
+        "title": "Gerät neu starten",
+        "data": {
+          "confirm": "Neustart bestätigen"
+        }
+      },
+      "dashboard": {
+        "title": "Dashboard anlegen",
+        "description": "Baut das mitgelieferte Dashboard (System / Gerät / Steuerung) für {dev_id}. Ohne „Überschreiben“ bleiben ein vorhandenes Dashboard und deine Änderungen erhalten.",
+        "data": {
+          "overwrite": "Vorhandenes Dashboard überschreiben"
+        }
+      }
+    },
+    "abort": {
+      "empty_week_plan": "Kein Wochentag wurde einem Tagesplan zugeordnet, es wurde nichts gesendet",
+      "get_plan_failed": "Das Gerät hat die Planabfrage nicht beantwortet",
+      "dashboard_created": "Dashboard angelegt",
+      "dashboard_updated": "Dashboard neu aufgebaut",
+      "dashboard_exists": "Für dieses Gerät gibt es bereits ein Dashboard, es wurde nichts geändert",
+      "dashboard_failed": "Das Dashboard konnte nicht angelegt werden"
+    }
+  },
+  "services": {
+    "set_tou_day_plan": {
+      "name": "TOU-Tagesplan setzen",
+      "description": "Sendet einen TOU-Tagesplan (day1..day8) an das Gerät.",
+      "fields": {
+        "dev_id": { "name": "Geräte-ID", "description": "Geräte-ID (client_prefix-SN)." },
+        "day_idx": { "name": "Index des Tagesplans", "description": "1..8" },
+        "day_plan": { "name": "Tagesplan", "description": "Liste der Segmente (max. 12)." }
+      }
+    },
+    "set_tou_week_plan": {
+      "name": "TOU-Wochenplan setzen",
+      "description": "Sendet die Zuordnung Wochentag → Tagesplan.",
+      "fields": {
+        "dev_id": { "name": "Geräte-ID", "description": "Geräte-ID (client_prefix-SN)." },
+        "week_plan": { "name": "Wochenplan", "description": "Liste aus {week:[...], day_idx:N}." }
+      }
+    },
+    "get_tou_plan": {
+      "name": "TOU-Plan abrufen",
+      "description": "Fragt den konfigurierten Plan für einen Wochentag ab.",
+      "fields": {
+        "dev_id": { "name": "Geräte-ID", "description": "Geräte-ID (client_prefix-SN)." },
+        "week": { "name": "Wochentag", "description": "Mo..So" }
+      }
+    },
+    "set_ems_mode": {
+      "name": "EMS-Modus setzen",
+      "description": "Wechselt den EMS-Modus (general / mqtt_ctrl / tou_plan).",
+      "fields": {
+        "dev_id": { "name": "Geräte-ID", "description": "Geräte-ID (client_prefix-SN)." },
+        "mode": { "name": "Modus", "description": "general, mqtt_ctrl oder tou_plan" }
+      }
+    },
+    "reboot": {
+      "name": "Gerät neu starten",
+      "description": "Sendet den Befehl RESTART an das Gerät.",
+      "fields": {
+        "dev_id": { "name": "Geräte-ID", "description": "Geräte-ID (client_prefix-SN)." }
+      }
+    },
+    "set_phase_output_power": {
+      "name": "Ausgangsleistung aller Phasen setzen",
+      "description": "Setzt die Ausgangsleistungsgrenze aller drei Phasen auf einmal.",
+      "fields": {
+        "dev_id": { "name": "Geräte-ID", "description": "Geräte-ID (client_prefix-SN)." },
+        "phase_a": { "name": "Grenze Phase A", "description": "Ausgangsleistungsgrenze in Watt (100..2500)." },
+        "phase_b": { "name": "Grenze Phase B", "description": "Ausgangsleistungsgrenze in Watt (100..2500)." },
+        "phase_c": { "name": "Grenze Phase C", "description": "Ausgangsleistungsgrenze in Watt (100..2500)." }
+      }
+    },
+    "create_dashboard": {
+      "name": "Geräte-Dashboard anlegen",
+      "description": "Baut das mitgelieferte Lovelace-Dashboard (System / Gerät / Steuerung) für ein Gerät.",
+      "fields": {
+        "dev_id": { "name": "Geräte-ID", "description": "Geräte-ID (client_prefix-SN)." },
+        "overwrite": { "name": "Überschreiben", "description": "Das Layout neu aufbauen, auch wenn das Dashboard bereits existiert." }
+      }
+    }
+  }
+}

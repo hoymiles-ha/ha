@@ -12,7 +12,7 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant.const import ATTR_DEVICE_ID
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 
@@ -24,6 +24,11 @@ from .const import (
     PHASE_C,
     PHASE_POWER_MAX,
     PHASE_POWER_MIN,
+    POWER_CTRL_MAX,
+    POWER_CTRL_MIN,
+    POWER_CTRL_REPEAT_DEFAULT_S,
+    POWER_CTRL_REPEAT_MAX_S,
+    POWER_CTRL_REPEAT_MIN_S,
     T_EMS_MODE_CMD,
     T_PHASE_OUTPUT_POWER_SET,
     T_REBOOT,
@@ -39,6 +44,8 @@ from .const import (
     TOU_TS_MAX,
     TOU_WEEKDAYS,
 )
+from .dashboard import RESULT_UNAVAILABLE, async_create_device_dashboard
+from .power_repeat import get_manager as get_repeat_manager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,6 +57,10 @@ SERVICE_GET_TOU_PLAN = "get_tou_plan"
 SERVICE_SET_EMS_MODE = "set_ems_mode"
 SERVICE_SET_PHASE_OUTPUT_POWER = "set_phase_output_power"
 SERVICE_REBOOT = "reboot"
+SERVICE_CREATE_DASHBOARD = "create_dashboard"
+SERVICE_SET_POWER_CTRL = "set_power_ctrl"
+SERVICE_STOP_POWER_CTRL = "stop_power_ctrl"
+SERVICE_GET_POWER_CTRL = "get_power_ctrl"
 
 DAY_PLAN_ITEM = vol.Schema(
     {
@@ -122,9 +133,38 @@ SCHEMA_SET_EMS_MODE = vol.Schema(
 
 SCHEMA_REBOOT = vol.Schema({**DEVICE_FIELDS})
 
+# ``overwrite`` rebuilds the bundled layout over an existing dashboard; without
+# it an existing dashboard (and every edit made to it) is left untouched.
+SCHEMA_CREATE_DASHBOARD = vol.Schema(
+    {
+        **DEVICE_FIELDS,
+        vol.Optional("overwrite", default=False): cv.boolean,
+    }
+)
+
 _PHASE_POWER = vol.All(
     vol.Coerce(int), vol.Range(min=PHASE_POWER_MIN, max=PHASE_POWER_MAX)
 )
+
+# The setpoint is a lease the firmware renews only while it keeps arriving, so
+# the service always carries the repeat interval - there is no "send once"
+# flavour of it here.  A raw one-off publish is still what `mqtt.publish` is.
+SCHEMA_SET_POWER_CTRL = vol.Schema(
+    {
+        **DEVICE_FIELDS,
+        vol.Required("value"): vol.All(
+            vol.Coerce(int), vol.Range(min=POWER_CTRL_MIN, max=POWER_CTRL_MAX)
+        ),
+        vol.Optional(
+            "interval", default=POWER_CTRL_REPEAT_DEFAULT_S
+        ): vol.All(
+            vol.Coerce(int),
+            vol.Range(min=POWER_CTRL_REPEAT_MIN_S, max=POWER_CTRL_REPEAT_MAX_S),
+        ),
+    }
+)
+
+SCHEMA_POWER_CTRL_ONLY = vol.Schema({**DEVICE_FIELDS})
 
 # The firmware only accepts a complete {"phase_a":..,"phase_b":..,"phase_c":..}
 # object (protocol §15), so all three phases are mandatory here.
@@ -249,6 +289,31 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             hass, mqtt_util.topic(T_REBOOT, dev_id), "RESTART"
         )
 
+    async def _handle_create_dashboard(call: ServiceCall) -> None:
+        dev_id = _resolve_dev_id(hass, dict(call.data))
+        result = await async_create_device_dashboard(
+            hass, dev_id, overwrite=bool(call.data.get("overwrite", False))
+        )
+        if result == RESULT_UNAVAILABLE:
+            _LOGGER.warning("Could not create a dashboard for %s", dev_id)
+        else:
+            _LOGGER.info("Dashboard for %s: %s", dev_id, result)
+
+    async def _handle_set_power_ctrl(call: ServiceCall) -> None:
+        dev_id = _resolve_dev_id(hass, dict(call.data))
+        await get_repeat_manager(hass).async_start(
+            dev_id, int(call.data["value"]), int(call.data["interval"])
+        )
+
+    async def _handle_stop_power_ctrl(call: ServiceCall) -> None:
+        dev_id = _resolve_dev_id(hass, dict(call.data))
+        await get_repeat_manager(hass).async_stop(dev_id)
+
+    async def _handle_get_power_ctrl(call: ServiceCall) -> dict[str, Any]:
+        """Report the running job so a freshly opened card can restore itself."""
+        dev_id = _resolve_dev_id(hass, dict(call.data))
+        return get_repeat_manager(hass).snapshot(dev_id)
+
     hass.services.async_register(
         DOMAIN, SERVICE_SET_TOU_DAY_PLAN, _handle_set_tou_day_plan, SCHEMA_SET_TOU_DAY_PLAN
     )
@@ -268,3 +333,28 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         SCHEMA_SET_PHASE_OUTPUT_POWER,
     )
     hass.services.async_register(DOMAIN, SERVICE_REBOOT, _handle_reboot, SCHEMA_REBOOT)
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CREATE_DASHBOARD,
+        _handle_create_dashboard,
+        SCHEMA_CREATE_DASHBOARD,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_POWER_CTRL,
+        _handle_set_power_ctrl,
+        SCHEMA_SET_POWER_CTRL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_STOP_POWER_CTRL,
+        _handle_stop_power_ctrl,
+        SCHEMA_POWER_CTRL_ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_POWER_CTRL,
+        _handle_get_power_ctrl,
+        SCHEMA_POWER_CTRL_ONLY,
+        supports_response=SupportsResponse.ONLY,
+    )

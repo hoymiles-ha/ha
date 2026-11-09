@@ -14,6 +14,11 @@ NAME: Final = "Hoymiles Official"
 
 CONF_DEV_ID: Final = "dev_id"
 
+# Stored in the config entry data when the user asked for a dashboard while
+# adding the device.  ``dashboard.async_create_device_dashboard`` runs once the
+# platforms are set up, because it needs the entity ids to exist.
+CONF_CREATE_DASHBOARD: Final = "create_dashboard"
+
 PLATFORMS: Final = ["sensor", "binary_sensor", "number"]
 
 # ---------------------------------------------------------------------------
@@ -104,6 +109,18 @@ PHASES: Final = (PHASE_A, PHASE_B, PHASE_C)
 PHASE_POWER_MIN: Final = 100
 PHASE_POWER_MAX: Final = 2500
 PHASE_POWER_STEP: Final = 1
+
+# ---------------------------------------------------------------------------
+# MQTT power setpoint (protocol §14 ``power_ctrl``)
+# ---------------------------------------------------------------------------
+# The firmware treats this as a lease, not as a setting: it drops the value
+# unless it is refreshed at least once a minute and then regulates on its own
+# again.  Hence the repeat - see power_repeat.py.
+POWER_CTRL_MIN: Final = -1000
+POWER_CTRL_MAX: Final = 1000
+POWER_CTRL_REPEAT_MIN_S: Final = 1
+POWER_CTRL_REPEAT_MAX_S: Final = 3600
+POWER_CTRL_REPEAT_DEFAULT_S: Final = 30
 
 # ---------------------------------------------------------------------------
 # EMS modes
@@ -200,7 +217,10 @@ BATTERY_CARD_FILENAME: Final = "hoymiles-battery.js"
 HISTORY_CHART_CARD_FILENAME: Final = "hoymiles-history-chart.js"
 GAUGE_CARD_FILENAME: Final = "hoymiles-gauge.js"
 CONTROL_CARD_FILENAME: Final = "hoymiles-control.js"
+DIAGNOSTICS_CARD_FILENAME: Final = "hoymiles-diagnostics.js"
 PACK_LIST_CARD_FILENAME: Final = "hoymiles-pack-list.js"
+# Not a card: it injects the language switch into the Home Assistant toolbar.
+LANG_SWITCH_FILENAME: Final = "hoymiles-lang.js"
 FRONTEND_ASSETS: Final = (
     CARD_FILENAME,
     SANKEY_CARD_FILENAME,
@@ -209,10 +229,22 @@ FRONTEND_ASSETS: Final = (
     HISTORY_CHART_CARD_FILENAME,
     GAUGE_CARD_FILENAME,
     CONTROL_CARD_FILENAME,
+    DIAGNOSTICS_CARD_FILENAME,
     PACK_LIST_CARD_FILENAME,
+    LANG_SWITCH_FILENAME,
 )
 
 CARD_URL: Final = f"{FRONTEND_URL}/{CARD_FILENAME}"
+
+# ---------------------------------------------------------------------------
+# Auto generated dashboard (see dashboard.py)
+# ---------------------------------------------------------------------------
+# A dashboard is created as ``<prefix><serial>`` e.g. ``g3-280520260806``, and
+# titled ``G3_280520260806`` - the same naming the integration has always used,
+# so existing dashboards are recognised instead of being duplicated.
+DASHBOARD_URL_PREFIX: Final = "g3-"
+DASHBOARD_TITLE_PREFIX: Final = "G3_"
+DASHBOARD_ICON: Final = "mdi:home-battery"
 
 # ---------------------------------------------------------------------------
 # Sankey card defaults
