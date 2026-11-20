@@ -1,0 +1,196 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "禾迈 MS-G2",
+        "description": "发现 {count} 台设备。可从列表选择，或手动填写设备标识（格式 client_prefix-SN）；真正识别设备的是序列号（开头四位是产品识别码 PID），前缀可自行修改。",
+        "data": {
+          "dev_id": "设备标识"
+        }
+      }
+    },
+    "error": {
+      "dev_id_required": "设备标识不能为空",
+      "dev_id_invalid": "序列号开头四位不是有效的产品识别码（如 4161A0209FF6）。横线前面的前缀可以是任意内容。"
+    },
+    "abort": {
+      "already_configured": "该设备已配置"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Hoymiles G2 设置",
+        "menu_options": {
+          "charts": "可选的设备曲线卡片",
+          "day_plan": "编辑日计划",
+          "week_plan": "编辑周计划",
+          "get_plan": "获取当前计划",
+          "set_mode": "设置 EMS 模式",
+          "reboot": "重启设备"
+        }
+      },
+      "charts": {
+        "title": "可选的设备曲线卡片",
+        "description": "勾选一项数据，即在该设备的「Device」页追加它的曲线卡片。卡片只从勾选那一刻开始记录并绘制，之前的历史不会补画；取消勾选后再勾选，则从新的时刻重新开始。",
+        "data": {
+          "grid_current": "电网电流 (A)",
+          "grid_frequency": "电网频率 (Hz)",
+          "active_power": "有功功率 (W)",
+          "reactive_power": "无功功率 (var)",
+          "rssi": "信号强度 (dBm)"
+        }
+      },
+      "day_plan": {
+        "title": "日计划",
+        "description": "选择要编辑的日计划 (day1..day8) 以及时间段数量（最多 12 段）。",
+        "data": {
+          "day_idx": "日计划索引",
+          "segments": "时间段数量"
+        }
+      },
+      "day_segment": {
+        "title": "第 {index}/{total} 段 ({day})",
+        "description": "mode：1=强制充电，2=光伏充电，4=放电。ts/te 为 15 分钟槽位 (0-96)，sh/sl 为 SOC 百分比，pc/pd 为功率限值 (W)。",
+        "data": {
+          "mode": "模式",
+          "ts": "开始槽位",
+          "te": "结束槽位",
+          "sh": "充电截止 SOC",
+          "sl": "放电截止 SOC",
+          "pc": "充电功率限值",
+          "pd": "放电功率限值"
+        }
+      },
+      "week_plan": {
+        "title": "周计划",
+        "description": "为每个星期指定一个日计划；选择 none 表示该日按自发自用运行。",
+        "data": {
+          "mon": "周一",
+          "tue": "周二",
+          "wed": "周三",
+          "thu": "周四",
+          "fri": "周五",
+          "sat": "周六",
+          "sun": "周日"
+        }
+      },
+      "get_plan": {
+        "title": "获取当前计划",
+        "description": "查询某一个星期当前配置的计划，结果显示在状态实体与通知中。",
+        "data": {
+          "week": "星期"
+        }
+      },
+      "set_mode": {
+        "title": "设置 EMS 模式",
+        "description": "general=设备自发自用，mqtt_ctrl=MQTT 功率控制，tou_plan=分时计划。",
+        "data": {
+          "mode": "EMS 模式"
+        }
+      },
+      "reboot": {
+        "title": "重启设备",
+        "data": {
+          "confirm": "确认重启"
+        }
+      },
+      "region": {
+        "title": "地区",
+        "description": "该设备计算“今日”所用的时区。今日发电量在此地区的零点清零，界面上所有时间也按此地区显示。选择第一项表示跟随 Home Assistant，也可以直接输入任意 IANA 时区名（例如 Europe/Berlin）。",
+        "data": {
+          "region": "地区"
+        }
+      }
+    },
+    "abort": {
+      "empty_week_plan": "没有任何星期被指定日计划，未下发",
+      "get_plan_failed": "设备未应答计划查询",
+      "charts_unsupported": "可选曲线卡片仅支持微逆（HiFlow / HiFlow Pro）",
+      "charts_not_saved": "仪表板写入失败，未改动任何卡片"
+    }
+  },
+  "services": {
+    "set_tou_day_plan": {
+      "name": "下发 TOU 日计划",
+      "description": "向设备下发某一天的日计划 (day1..day8)。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" },
+        "day_idx": { "name": "日计划索引", "description": "1..8" },
+        "day_plan": { "name": "日计划", "description": "时间段列表（最多 12 段）" }
+      }
+    },
+    "set_tou_week_plan": {
+      "name": "下发 TOU 周计划",
+      "description": "下发星期与日计划的映射关系。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" },
+        "week_plan": { "name": "周计划", "description": "{week:[...], day_idx:N} 列表" }
+      }
+    },
+    "get_tou_plan": {
+      "name": "获取 TOU 计划",
+      "description": "查询某一个星期已配置的计划。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" },
+        "week": { "name": "星期", "description": "Mon..Sun" }
+      }
+    },
+    "set_ems_mode": {
+      "name": "设置 EMS 模式",
+      "description": "切换 EMS 模式 (general / mqtt_ctrl / tou_plan)。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" },
+        "mode": { "name": "模式", "description": "general、mqtt_ctrl 或 tou_plan" }
+      }
+    },
+    "reboot": {
+      "name": "重启设备",
+      "description": "向设备发送 RESTART 指令。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" }
+      }
+    },
+    "set_phase_output_power": {
+      "name": "设置三相输出功率",
+      "description": "一次性设置 A/B/C 三相的输出功率限值。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" },
+        "phase_a": { "name": "A 相限值", "description": "A 相输出功率限值 (W, 100..2500)" },
+        "phase_b": { "name": "B 相限值", "description": "B 相输出功率限值 (W, 100..2500)" },
+        "phase_c": { "name": "C 相限值", "description": "C 相输出功率限值 (W, 100..2500)" }
+      }
+    },
+    "start_power_ctrl_keepalive": {
+      "name": "开启功率控制保活",
+      "description": "按周期重复下发同一个 power_ctrl 数值。设备把该值当作租约，约 60 秒后自动退回输出功率，只发一次无法维持。保活运行在 Home Assistant 内，不开仪表盘也持续生效。需先切到 mqtt_ctrl，离开该模式或集成卸载时会自动停止。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" },
+        "power": { "name": "功率", "description": "需要维持的功率限值 (W)" },
+        "period": { "name": "周期", "description": "两次下发的间隔秒数 (5..3600，默认 30)" }
+      }
+    },
+    "stop_power_ctrl_keepalive": {
+      "name": "关闭功率控制保活",
+      "description": "停止为该设备重复下发 power_ctrl。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" }
+      }
+    },
+    "get_optional_charts": {
+      "name": "读取可选曲线",
+      "description": "返回当前已开启的可选曲线，以及每张曲线的开始记录时刻。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" }
+      }
+    },
+    "set_optional_charts": {
+      "name": "设置可选曲线",
+      "description": "开启或关闭设备页的可选曲线。这是整体覆盖写入：未提交的键视为关闭，请提交完整的一组。",
+      "fields": {
+        "dev_id": { "name": "设备标识", "description": "设备标识 (client_prefix-SN)" },
+        "charts": { "name": "曲线", "description": "键到布尔值的对象：grid_current、grid_frequency、active_power、reactive_power、rssi" }
+      }
+    }
+  }
+}
