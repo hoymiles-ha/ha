@@ -1,0 +1,346 @@
+set_tou_day_plan:
+  name: Set TOU day plan
+  description: Publish one TOU day plan (day1..day8) to a Hoymiles micro storage device.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles_g2
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "MSA-280520260806"
+      selector:
+        text:
+    day_idx:
+      name: Day plan index
+      description: Day plan index in range 1..8.
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 8
+          step: 1
+          mode: box
+    day_plan:
+      name: Day plan
+      description: List of time segments (max 12). ts/te are 15-minute slots (0-96).
+      required: true
+      example: '[{"mode":1,"ts":0,"te":5,"sh":55,"sl":10,"pc":1000,"pd":1000}]'
+      selector:
+        object:
+
+set_tou_week_plan:
+  name: Set TOU week plan
+  description: Publish the weekday to day-plan mapping.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles_g2
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "MSA-280520260806"
+      selector:
+        text:
+    week_plan:
+      name: Week plan
+      description: List of {"week":["Mon","Tue"],"day_idx":1} entries.
+      required: true
+      example: '[{"week":["Mon","Tue"],"day_idx":1}]'
+      selector:
+        object:
+
+get_tou_plan:
+  name: Get TOU plan
+  description: Query the plan configured for one weekday.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles_g2
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "MSA-280520260806"
+      selector:
+        text:
+    week:
+      name: Weekday
+      description: One of Mon, Tue, Wed, Thu, Fri, Sat, Sun.
+      required: true
+      example: Mon
+      selector:
+        select:
+          options: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+
+set_ems_mode:
+  name: Set EMS mode
+  description: Switch the EMS mode of the device.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles_g2
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "MSA-280520260806"
+      selector:
+        text:
+    mode:
+      name: Mode
+      description: general (self-consumption), mqtt_ctrl (MQTT power control) or tou_plan (time-of-use).
+      required: true
+      example: tou_plan
+      selector:
+        select:
+          options: [general, mqtt_ctrl, tou_plan]
+
+reboot:
+  name: Reboot device
+  description: Send the RESTART command to the device.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles_g2
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "MSA-280520260806"
+      selector:
+        text:
+
+set_phase_output_power:
+  name: Set multi phase output power
+  description: >-
+    Set the output power limit of all three phases at once. The firmware expects a
+    complete JSON object, so all three phases are required.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles_g2
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "MSA-280520260806"
+      selector:
+        text:
+    phase_a:
+      name: Phase A limit
+      description: Output power limit of phase A in watt.
+      required: true
+      example: 800
+      selector:
+        number:
+          min: 100
+          max: 2500
+          step: 1
+          mode: box
+    phase_b:
+      name: Phase B limit
+      description: Output power limit of phase B in watt.
+      required: true
+      example: 800
+      selector:
+        number:
+          min: 100
+          max: 2500
+          step: 1
+          mode: box
+    phase_c:
+      name: Phase C limit
+      description: Output power limit of phase C in watt.
+      required: true
+      example: 800
+      selector:
+        number:
+          min: 100
+          max: 2500
+          step: 1
+          mode: box
+
+start_power_ctrl_keepalive:
+  name: Start power control keep-alive
+  description: >-
+    Re-publish one power_ctrl value on a fixed period. The firmware treats
+    power_ctrl as a lease and falls back to output_power after about 60 seconds,
+    so a single send never holds a limit. Runs inside Home Assistant, so it
+    keeps working while no dashboard is open. Requires EMS mode mqtt_ctrl; it
+    stops itself when the device leaves that mode or is unloaded.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles_g2
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "RMI-1650A028FC22"
+      selector:
+        text:
+    power:
+      name: Power
+      description: Power limit in watt to hold.
+      required: true
+      example: 200
+      selector:
+        number:
+          min: -1000
+          max: 3000
+          step: 1
+          mode: box
+    period:
+      name: Period
+      description: Seconds between two sends. Keep it below the 60 s lease.
+      required: false
+      default: 30
+      selector:
+        number:
+          min: 5
+          max: 3600
+          step: 1
+          unit_of_measurement: s
+          mode: box
+
+stop_power_ctrl_keepalive:
+  name: Stop power control keep-alive
+  description: Stop re-publishing power_ctrl for a device.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles_g2
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "RMI-1650A028FC22"
+      selector:
+        text:
+
+get_optional_charts:
+  name: Get optional device charts
+  description: Return which opt-in Device-view curves are enabled, and when each of them started recording.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles_g2
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "RMI-4161A0209FF6"
+      selector:
+        text:
+
+set_optional_charts:
+  name: Set optional device charts
+  description: Enable or disable the opt-in Device-view curves. This is a whole-state write - a key that is left out is disabled, so send the complete set.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles_g2
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "RMI-4161A0209FF6"
+      selector:
+        text:
+    charts:
+      name: Charts
+      description: Object of chart key to boolean. Keys - grid_current, grid_frequency, active_power, reactive_power, rssi.
+      required: true
+      example: '{"grid_current": true, "rssi": true}'
+      selector:
+        object:
+
+
+get_region:
+  name: Get region
+  description: Return the time zone this device's day is measured in, and whether it follows Home Assistant.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles_g2
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "RMI-4161A0209FF6"
+      selector:
+        text:
+
+set_region:
+  name: Set region
+  description: Set the time zone this device's day is measured in. Empty means follow Home Assistant.
+  fields:
+    device_id:
+      name: Device
+      description: Target device picked from the device registry. Alternative to Device ID.
+      required: false
+      selector:
+        device:
+          integration: hoymiles_g2
+    dev_id:
+      name: Device ID
+      description: Device identifier, in the form client_prefix-SN. Optional when a device is selected.
+      required: false
+      example: "RMI-4161A0209FF6"
+      selector:
+        text:
+    region:
+      name: Region
+      description: IANA time zone name such as Europe/Berlin. Leave empty to follow Home Assistant.
+      required: true
+      example: "Europe/Berlin"
+      selector:
+        text:
