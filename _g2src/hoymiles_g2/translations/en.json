@@ -1,0 +1,196 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Hoymiles MS-G2",
+        "description": "Discovered {count} device(s). Pick one from the list or type the device id manually. The device id has the form client_prefix-SN; only the serial (whose leading four digits are the product id) identifies the device, the prefix is yours to choose.",
+        "data": {
+          "dev_id": "Device ID"
+        }
+      }
+    },
+    "error": {
+      "dev_id_required": "A device id is required",
+      "dev_id_invalid": "The serial does not start with a four digit product id (e.g. 4161A0209FF6). The prefix in front of the dash can be anything."
+    },
+    "abort": {
+      "already_configured": "This device is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Hoymiles G2 options",
+        "menu_options": {
+          "charts": "Optional device charts",
+          "day_plan": "Edit day plan",
+          "week_plan": "Edit week plan",
+          "get_plan": "Get current plan",
+          "set_mode": "Set EMS mode",
+          "reboot": "Reboot device"
+        }
+      },
+      "charts": {
+        "title": "Optional device charts",
+        "description": "Tick a reading to add its curve card to this device's Device view. A card starts recording the moment it is ticked and only ever draws the data recorded after that, so an unticked-then-ticked card begins a fresh curve.",
+        "data": {
+          "grid_current": "Grid current (A)",
+          "grid_frequency": "Grid frequency (Hz)",
+          "active_power": "Active power (W)",
+          "reactive_power": "Reactive power (var)",
+          "rssi": "Signal strength (dBm)"
+        }
+      },
+      "day_plan": {
+        "title": "Day plan",
+        "description": "Choose which day plan (day1..day8) to edit and how many time segments it has (max 12).",
+        "data": {
+          "day_idx": "Day plan index",
+          "segments": "Number of segments"
+        }
+      },
+      "day_segment": {
+        "title": "Segment {index} of {total} ({day})",
+        "description": "mode 1=force charge, 2=PV charge, 4=discharge. ts/te are 15-minute slots (0-96), sh/sl are SOC in %, pc/pd are power limits in W.",
+        "data": {
+          "mode": "Mode",
+          "ts": "Start slot",
+          "te": "End slot",
+          "sh": "Charge SOC limit",
+          "sl": "Discharge SOC limit",
+          "pc": "Charge power limit",
+          "pd": "Discharge power limit"
+        }
+      },
+      "week_plan": {
+        "title": "Week plan",
+        "description": "Map each weekday to one of the day plans. Choose 'none' to run self-consumption for that day.",
+        "data": {
+          "mon": "Monday",
+          "tue": "Tuesday",
+          "wed": "Wednesday",
+          "thu": "Thursday",
+          "fri": "Friday",
+          "sat": "Saturday",
+          "sun": "Sunday"
+        }
+      },
+      "get_plan": {
+        "title": "Get current plan",
+        "description": "Query the plan currently configured for one weekday. The result is shown in the status sensor and a notification.",
+        "data": {
+          "week": "Weekday"
+        }
+      },
+      "set_mode": {
+        "title": "Set EMS mode",
+        "description": "general = device self-consumption, mqtt_ctrl = MQTT power control, tou_plan = time-of-use plan.",
+        "data": {
+          "mode": "EMS mode"
+        }
+      },
+      "reboot": {
+        "title": "Reboot device",
+        "data": {
+          "confirm": "Confirm reboot"
+        }
+      },
+      "region": {
+        "title": "Region",
+        "description": "The time zone this device's day is measured in. Today's yield resets at this zone's midnight and every displayed time follows it. Choose the first entry to follow Home Assistant, or type any IANA zone name such as Europe/Berlin.",
+        "data": {
+          "region": "Region"
+        }
+      }
+    },
+    "abort": {
+      "empty_week_plan": "No weekday was mapped to a day plan, nothing was sent",
+      "get_plan_failed": "The device did not answer the plan query",
+      "charts_unsupported": "Optional charts are only available on a micro inverter (HiFlow / HiFlow Pro)",
+      "charts_not_saved": "The dashboard could not be written; no chart was changed"
+    }
+  },
+  "services": {
+    "set_tou_day_plan": {
+      "name": "Set TOU day plan",
+      "description": "Publish one TOU day plan (day1..day8) to the device.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." },
+        "day_idx": { "name": "Day plan index", "description": "1..8" },
+        "day_plan": { "name": "Day plan", "description": "List of segments (max 12)." }
+      }
+    },
+    "set_tou_week_plan": {
+      "name": "Set TOU week plan",
+      "description": "Publish the weekday to day-plan mapping.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." },
+        "week_plan": { "name": "Week plan", "description": "List of {week:[...], day_idx:N}." }
+      }
+    },
+    "get_tou_plan": {
+      "name": "Get TOU plan",
+      "description": "Query the plan configured for one weekday.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." },
+        "week": { "name": "Weekday", "description": "Mon..Sun" }
+      }
+    },
+    "set_ems_mode": {
+      "name": "Set EMS mode",
+      "description": "Switch the EMS mode (general / mqtt_ctrl / tou_plan).",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." },
+        "mode": { "name": "Mode", "description": "general, mqtt_ctrl or tou_plan" }
+      }
+    },
+    "reboot": {
+      "name": "Reboot device",
+      "description": "Send the RESTART command to the device.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." }
+      }
+    },
+    "set_phase_output_power": {
+      "name": "Set multi phase output power",
+      "description": "Set the output power limit of all three phases at once.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." },
+        "phase_a": { "name": "Phase A limit", "description": "Output power limit in watt (100..2500)." },
+        "phase_b": { "name": "Phase B limit", "description": "Output power limit in watt (100..2500)." },
+        "phase_c": { "name": "Phase C limit", "description": "Output power limit in watt (100..2500)." }
+      }
+    },
+    "start_power_ctrl_keepalive": {
+      "name": "Start power control keep-alive",
+      "description": "Re-publish one power_ctrl value on a period. The firmware treats it as a lease and falls back after about 60 seconds. Runs inside Home Assistant, so it keeps working with no dashboard open. Requires mqtt_ctrl mode.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." },
+        "power": { "name": "Power", "description": "Power limit in watt to hold." },
+        "period": { "name": "Period", "description": "Seconds between two sends (5..3600, default 30)." }
+      }
+    },
+    "stop_power_ctrl_keepalive": {
+      "name": "Stop power control keep-alive",
+      "description": "Stop re-publishing power_ctrl for a device.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." }
+      }
+    },
+    "get_optional_charts": {
+      "name": "Get optional device charts",
+      "description": "Return which opt-in Device-view curves are enabled, and when each of them started recording.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." }
+      }
+    },
+    "set_optional_charts": {
+      "name": "Set optional device charts",
+      "description": "Enable or disable the opt-in Device-view curves. A key that is left out is disabled, so send the complete set.",
+      "fields": {
+        "dev_id": { "name": "Device ID", "description": "Device id (client_prefix-SN)." },
+        "charts": { "name": "Charts", "description": "Object of chart key to boolean: grid_current, grid_frequency, active_power, reactive_power, rssi." }
+      }
+    }
+  }
+}
